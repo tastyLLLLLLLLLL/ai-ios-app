@@ -6,7 +6,7 @@
 ## Как установить на iPhone с Windows
 
 1. Скачайте готовый файл приложения:
-   [PocketAI.ipa](https://github.com/tastyLLLLLLLLLL/ai-ios-app/releases/latest/download/PocketAI.ipa).
+   [PocketAI.ipa](https://github.com/tastyLLLLLLLLLL/ai-ios-app/raw/release/PocketAI.ipa).
 2. Установите на компьютер [iTunes](https://www.apple.com/itunes/) и [Sideloadly](https://sideloadly.io/).
 3. Подключите iPhone кабелем, откройте Sideloadly, перетащите в него `PocketAI.ipa`,
    введите свой Apple ID и нажмите **Start**.
@@ -33,4 +33,4 @@
 - `App/Engine/` — запуск модели через [llama.cpp](https://github.com/ggml-org/llama.cpp).
 - `project.yml` — описание проекта для XcodeGen.
 - `.github/workflows/build.yml` — сборка на GitHub: после каждого изменения в ветке `main`
-  готовый `PocketAI.ipa` публикуется в разделе Releases.
+  готовый `PocketAI.ipa` публикуется в ветке `release`.
