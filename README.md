@@ -3,6 +3,17 @@
 Личное приложение для iPhone: чат с нейросетью, которая работает прямо на телефоне, без интернета.
 Модель скачивается один раз, после этого все разговоры остаются на устройстве.
 
+## Как выглядит
+
+Снимки сделаны в симуляторе iPhone с облегчённой моделью Qwen3 1.7B; ответы на них настоящие.
+
+<p>
+  <img src="https://github.com/tastyLLLLLLLLLL/ai-ios-app/raw/screenshots/03-home.png" width="200" alt="Главный экран">
+  <img src="https://github.com/tastyLLLLLLLLLL/ai-ios-app/raw/screenshots/07-chat.png" width="200" alt="Чат">
+  <img src="https://github.com/tastyLLLLLLLLLL/ai-ios-app/raw/screenshots/10-code.png" width="200" alt="Ответ с кодом">
+  <img src="https://github.com/tastyLLLLLLLLLL/ai-ios-app/raw/screenshots/02-models-empty.png" width="200" alt="Выбор модели">
+</p>
+
 ## Как установить на iPhone с Windows
 
 1. Скачайте готовый файл приложения:
