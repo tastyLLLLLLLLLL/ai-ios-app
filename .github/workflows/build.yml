@@ -1,0 +1,90 @@
+name: Build iOS app
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # Version of the llama.cpp engine the app is built with.
+  LLAMA_TAG: b12445
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check that the model download links work
+        run: |
+          status=0
+          for url in $(grep -o 'https://huggingface.co[^"]*' App/Models/ModelCatalog.swift); do
+            headers=$(curl -sI "$url")
+            code=$(echo "$headers" | head -1 | awk '{print $2}')
+            size=$(echo "$headers" | grep -i '^x-linked-size' | awk '{print $2}' | tr -d '\r')
+            echo "$code  ${size:-?} bytes  $url"
+            case "$code" in 200|301|302|307) ;; *) status=1 ;; esac
+          done
+          exit $status
+
+      - name: Download the llama.cpp engine
+        run: |
+          curl -fL --retry 3 -o llama.zip \
+            "https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_TAG}/llama-${LLAMA_TAG}-xcframework.zip"
+          unzip -q llama.zip -d llama-unpacked
+          mkdir -p Frameworks
+          mv llama-unpacked/build-apple/llama.xcframework Frameworks/
+          ls Frameworks/llama.xcframework
+
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build
+        run: |
+          xcodebuild -version
+          set +e
+          xcodebuild \
+            -project PocketAI.xcodeproj \
+            -scheme PocketAI \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build > build.log 2>&1
+          code=$?
+          grep -E "error:|warning: var|BUILD (SUCCEEDED|FAILED)" build.log | sort -u | head -150
+          if [ $code -ne 0 ]; then
+            echo "----- last lines of the build log -----"
+            tail -40 build.log
+          fi
+          exit $code
+
+      - name: Package the .ipa
+        run: |
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/PocketAI.app Payload/
+          zip -qry PocketAI.ipa Payload
+          ls -lh PocketAI.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PocketAI-ipa
+          path: PocketAI.ipa
+
+      - name: Publish as the latest release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --cleanup-tag --yes || true
+          gh release create latest PocketAI.ipa \
+            --target "$GITHUB_SHA" \
+            --title "Pocket AI" \
+            --notes "Свежая сборка приложения. Скачайте PocketAI.ipa и установите через Sideloadly."

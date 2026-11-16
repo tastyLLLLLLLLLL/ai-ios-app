@@ -1,0 +1,8 @@
+.DS_Store
+build/
+Frameworks/
+Support/Info.plist
+*.xcodeproj
+*.ipa
+Payload/
+llama.zip
