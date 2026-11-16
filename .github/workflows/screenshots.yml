@@ -20,7 +20,7 @@ env:
 jobs:
   screenshots:
     runs-on: macos-15
-    timeout-minutes: 50
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
 
@@ -87,7 +87,7 @@ jobs:
           ls -lh model.gguf
 
       - name: Take screenshots
-        timeout-minutes: 25
+        timeout-minutes: 50
         run: scripts/screenshots.sh build-sim/Build/Products/Release-iphonesimulator/PocketAI.app model.gguf "$MODEL_NAME"
 
       - uses: actions/upload-artifact@v4

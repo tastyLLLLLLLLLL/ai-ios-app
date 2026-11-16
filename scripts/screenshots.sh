@@ -53,10 +53,11 @@ cp "$MODEL" "$DATA/Documents/Models/$MODEL_NAME"
 
 mtime() { stat -f %m "$CHATS" 2>/dev/null || echo 0; }
 
-# Waits until the app saves the finished reply (or gives up after 5 minutes).
+# Waits until the app saves the finished reply (checks every 2 seconds, up to the given number of tries).
 wait_for_reply() {
   local before="$1"
-  for _ in $(seq 1 150); do
+  local tries="${2:-150}"
+  for _ in $(seq 1 "$tries"); do
     if [ "$(mtime)" != "$before" ]; then echo "Reply finished"; return 0; fi
     sleep 2
   done
@@ -65,27 +66,27 @@ wait_for_reply() {
 
 launch
 shot 03-home 5
+launch -demoScreen settings
+shot 04-settings 5
+launch -demoScreen models
+shot 05-models-installed 5
 
+# The build server has no GPU, so generation here is far slower than on a phone.
 before=$(mtime)
 launch -demoPrompt "Объясни простыми словами, что такое чёрная дыра. Ответь в трёх-четырёх предложениях."
-shot 04-chat-streaming 25
-wait_for_reply "$before"
-shot 05-chat 2
+shot 06-chat-loading 25
+wait_for_reply "$before" 420
+shot 07-chat 3
 limit 60 xcrun simctl ui "$UDID" appearance light || true
-shot 06-chat-light 4
+shot 08-chat-light 6
 limit 60 xcrun simctl ui "$UDID" appearance dark || true
+launch -demoScreen chats
+shot 09-chats 6
 
 before=$(mtime)
-launch -demoPrompt "Напиши на Python функцию, которая проверяет, является ли строка палиндромом. Коротко объясни, как она работает."
-wait_for_reply "$before"
-shot 07-code 2
-
-launch -demoScreen chats
-shot 08-chats 5
-launch -demoScreen settings
-shot 09-settings 5
-launch -demoScreen models
-shot 10-models 5
+launch -demoPrompt "Напиши на Python функцию is_palindrome(s). Только код и одно предложение пояснения."
+wait_for_reply "$before" 480
+shot 10-code 3
 
 echo "----- crash reports -----"
 ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i pocket || echo "none"
