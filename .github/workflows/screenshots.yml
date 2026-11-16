@@ -26,7 +26,7 @@ jobs:
 
       - name: Restore the simulator build of llama.cpp
         id: llama-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: Frameworks/llama.xcframework
           key: llama-sim-${{ env.LLAMA_TAG }}
@@ -41,6 +41,13 @@ jobs:
           mkdir -p Frameworks
           mv llama-src/build-apple/llama.xcframework Frameworks/
           ls Frameworks/llama.xcframework
+
+      - name: Save the simulator build of llama.cpp
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: Frameworks/llama.xcframework
+          key: llama-sim-${{ env.LLAMA_TAG }}
 
       - name: Generate the Xcode project
         run: |
@@ -64,11 +71,19 @@ jobs:
           if [ $code -ne 0 ]; then tail -40 build.log; fi
           exit $code
 
+      # The build server has 7 GB of memory, too little to run the 4B model in the
+      # simulator, so the screenshot run uses the lighter Qwen3 1.7B.
       - name: Download the model
         run: |
-          url=$(grep -o 'https://huggingface.co[^"]*' App/Models/ModelCatalog.swift | head -1)
-          echo "MODEL_NAME=$(basename "$url")" >> "$GITHUB_ENV"
-          curl -fL --retry 3 -o model.gguf "$url"
+          for url in \
+            "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf" \
+            "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf"; do
+            if curl -fL --retry 2 -o model.gguf "$url"; then
+              echo "MODEL_NAME=$(basename "$url")" >> "$GITHUB_ENV"
+              echo "Using $url"
+              break
+            fi
+          done
           ls -lh model.gguf
 
       - name: Take screenshots

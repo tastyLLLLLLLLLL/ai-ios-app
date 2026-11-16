@@ -150,6 +150,9 @@ final class LlamaEngine: @unchecked Sendable {
         contextParams.n_batch = UInt32(Self.batchSize)
         contextParams.n_threads = 4
         contextParams.n_threads_batch = 4
+        #if targetEnvironment(simulator)
+        contextParams.offload_kqv = false
+        #endif
 
         guard let loadedContext = llama_init_from_model(loadedModel, contextParams) else {
             llama_model_free(loadedModel)
