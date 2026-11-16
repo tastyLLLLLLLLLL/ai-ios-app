@@ -86,18 +86,13 @@ jobs:
           name: PocketAI-ipa
           path: PocketAI.ipa
 
-      # The finished app is kept on the "release" branch so it has a permanent download link.
-      - name: Publish the .ipa to the release branch
+      - name: Publish as the latest release
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir publish
-          cp PocketAI.ipa publish/
-          cd publish
-          git init -q
-          git checkout -q -b release
-          git add PocketAI.ipa
-          git -c user.name="github-actions" -c user.email="github-actions@users.noreply.github.com" \
-            commit -q -m "Pocket AI build from ${GITHUB_SHA::7}"
-          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" release
+          gh release delete latest --cleanup-tag --yes || true
+          gh release create latest PocketAI.ipa \
+            --target "$GITHUB_SHA" \
+            --title "Pocket AI" \
+            --notes "Свежая сборка приложения. Скачайте PocketAI.ipa и установите через Sideloadly."

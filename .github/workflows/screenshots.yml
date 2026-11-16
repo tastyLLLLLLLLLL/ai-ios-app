@@ -1,8 +1,14 @@
 name: Screenshots
 
 # Runs the app in the iOS Simulator with a real model and publishes
-# screenshots to the "screenshots" branch. Started manually.
+# screenshots to the "screenshots" branch. Runs when the screenshot
+# script or this file changes.
 on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/screenshots.sh
+      - .github/workflows/screenshots.yml
   workflow_dispatch:
 
 permissions:
