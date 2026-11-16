@@ -14,7 +14,7 @@ env:
 jobs:
   screenshots:
     runs-on: macos-15
-    timeout-minutes: 75
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
 
@@ -66,6 +66,7 @@ jobs:
           ls -lh model.gguf
 
       - name: Take screenshots
+        timeout-minutes: 25
         run: scripts/screenshots.sh build-sim/Build/Products/Release-iphonesimulator/PocketAI.app model.gguf "$MODEL_NAME"
 
       - uses: actions/upload-artifact@v4
@@ -75,6 +76,7 @@ jobs:
           path: shots
 
       - name: Publish to the screenshots branch
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
