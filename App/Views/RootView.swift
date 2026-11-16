@@ -67,6 +67,20 @@ struct RootView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
         }
+        .task {
+            // Launch arguments used by the automated screenshot run:
+            // -demoScreen models|settings|chats, -demoPrompt "text".
+            let defaults = UserDefaults.standard
+            switch defaults.string(forKey: "demoScreen") {
+            case "models": showModels = true
+            case "settings": showSettings = true
+            case "chats": showChats = true
+            default: break
+            }
+            if let prompt = defaults.string(forKey: "demoPrompt") {
+                model.send(prompt)
+            }
+        }
         .onChange(of: scenePhase) {
             // iOS does not allow GPU work in the background, so generation must stop.
             if scenePhase == .background { model.stop() }

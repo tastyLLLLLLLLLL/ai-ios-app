@@ -1,0 +1,86 @@
+name: Screenshots
+
+# Runs the app in the iOS Simulator with a real model and publishes
+# screenshots to the "screenshots" branch. Started manually.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  LLAMA_TAG: b12445
+
+jobs:
+  screenshots:
+    runs-on: macos-15
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore the simulator build of llama.cpp
+        id: llama-cache
+        uses: actions/cache@v4
+        with:
+          path: Frameworks/llama.xcframework
+          key: llama-sim-${{ env.LLAMA_TAG }}
+
+      - name: Build llama.cpp for the simulator
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$LLAMA_TAG" https://github.com/ggml-org/llama.cpp llama-src
+          cd llama-src
+          ./build-xcframework.sh ios-sim > ../llama-build.log 2>&1 || { tail -60 ../llama-build.log; exit 1; }
+          cd ..
+          mkdir -p Frameworks
+          mv llama-src/build-apple/llama.xcframework Frameworks/
+          ls Frameworks/llama.xcframework
+
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build the app for the simulator
+        run: |
+          set +e
+          xcodebuild \
+            -project PocketAI.xcodeproj \
+            -scheme PocketAI \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build-sim \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            build > build.log 2>&1
+          code=$?
+          grep -E "error:|BUILD (SUCCEEDED|FAILED)" build.log | sort -u | head -150
+          if [ $code -ne 0 ]; then tail -40 build.log; fi
+          exit $code
+
+      - name: Download the model
+        run: |
+          url=$(grep -o 'https://huggingface.co[^"]*' App/Models/ModelCatalog.swift | head -1)
+          echo "MODEL_NAME=$(basename "$url")" >> "$GITHUB_ENV"
+          curl -fL --retry 3 -o model.gguf "$url"
+          ls -lh model.gguf
+
+      - name: Take screenshots
+        run: scripts/screenshots.sh build-sim/Build/Products/Release-iphonesimulator/PocketAI.app model.gguf "$MODEL_NAME"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: shots
+
+      - name: Publish to the screenshots branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd shots
+          git init -q
+          git checkout -q -b screenshots
+          git add .
+          git -c user.name="github-actions" -c user.email="github-actions@users.noreply.github.com" commit -q -m "Screenshots from the simulator"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" screenshots
