@@ -32,9 +32,17 @@ jobs:
           exit $status
 
       - name: Download the llama.cpp engine
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fL --retry 3 -o llama.zip \
-            "https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_TAG}/llama-${LLAMA_TAG}-xcframework.zip"
+          # Use the pinned version; if its package is not published, take the newest one that is.
+          url="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_TAG}/llama-${LLAMA_TAG}-xcframework.zip"
+          if ! curl -fsL --retry 3 -o llama.zip "$url"; then
+            url=$(gh api "repos/ggml-org/llama.cpp/releases?per_page=30" \
+              --jq '[.[].assets[] | select(.name | endswith("xcframework.zip")) | .browser_download_url][0]')
+            curl -fL --retry 3 -o llama.zip "$url"
+          fi
+          echo "llama.cpp package: $url"
           unzip -q llama.zip -d llama-unpacked
           mkdir -p Frameworks
           mv llama-unpacked/build-apple/llama.xcframework Frameworks/
