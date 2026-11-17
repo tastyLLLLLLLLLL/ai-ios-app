@@ -37,8 +37,8 @@
 </p>
 <p align="center">
   <img src="docs/screenshots/13-theme-graphite.jpg" width="240" alt="Тема «Графит»">
-  <img src="docs/screenshots/14-theme-sunset.jpg" width="240" alt="Тема «Закат»">
-  <img src="docs/screenshots/15-theme-ruby.jpg" width="240" alt="Тема «Рубин»">
+  <img src="docs/screenshots/14-theme-sunset-v2.jpg" width="240" alt="Тема «Закат»">
+  <img src="docs/screenshots/15-theme-ruby-v2.jpg" width="240" alt="Тема «Рубин»">
 </p>
 
 ## Возможности
