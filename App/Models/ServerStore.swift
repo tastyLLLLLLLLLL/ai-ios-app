@@ -274,6 +274,24 @@ final class ServerStore {
         hasRunPodKey = !trimmed.isEmpty
     }
 
+    /// Asks the server to send a test notification through ntfy and returns what happened.
+    func testNotification() async -> String {
+        struct Result: Decodable { let ok: Bool; let detail: String; let topic: String }
+        do {
+            let result: Result = try await send("/api/test-notify", method: "POST", body: [:])
+            return result.ok
+                ? "Сервер отправил уведомление в тему \(result.topic). Если оно не пришло — проверьте подписку на эту тему в ntfy и что уведомления для ntfy разрешены в настройках iPhone."
+                : "Не отправилось: \(result.detail)"
+        } catch let error as ServerError {
+            if case .message(let text) = error, text.contains("404") || text.contains("Not Found") {
+                return "На сервере старая версия. Выполните на сервере команду установки, чтобы обновить его."
+            }
+            return error.localizedDescription
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
     func setIdleMinutes(_ minutes: Int) async {
         idleMinutes = minutes
         let _: ServerSettings? = try? await send("/api/settings", method: "POST", body: ["idleMinutes": minutes])

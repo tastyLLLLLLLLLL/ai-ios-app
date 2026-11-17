@@ -13,6 +13,8 @@ struct OnlineModelsView: View {
     @State private var runPodKey = ""
     @State private var powerError: String?
     @State private var powerBusy = false
+    @State private var notifyResult: String?
+    @State private var testingNotify = false
 
     private var server: ServerStore { model.server }
 
@@ -403,6 +405,34 @@ struct OnlineModelsView: View {
                 .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             .buttonStyle(PressableStyle())
+
+            Button {
+                testingNotify = true
+                notifyResult = nil
+                Task {
+                    let result = await server.testNotification()
+                    withAnimation(.smooth) { notifyResult = result }
+                    testingNotify = false
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    if testingNotify { ProgressView().controlSize(.small) }
+                    Label("Проверить уведомление", systemImage: "bell.and.waves.left.and.right")
+                }
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .plainButtonLabel(Capsule())
+            }
+            .liquidButton(prominent: false, shape: .capsule)
+            .disabled(testingNotify)
+
+            if let notifyResult {
+                Text(notifyResult)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .transition(.opacity)
+            }
         }
         .padding(16)
         .glassCard(cornerRadius: 22)

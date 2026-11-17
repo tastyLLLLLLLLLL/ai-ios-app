@@ -205,16 +205,23 @@ def public_job(job):
 
 
 async def notify(title, message):
-    """Push notification through ntfy (JSON form keeps Cyrillic intact). Never includes the prompt."""
+    """Push notification through ntfy (JSON form keeps Cyrillic intact). Never includes the prompt.
+    Returns (sent, detail); failures are written to the gateway log."""
     if not NTFY_TOPIC:
-        return
+        return False, "Тема уведомлений не задана."
     try:
-        async with ClientSession(timeout=ClientTimeout(total=10)) as session:
-            await session.post("https://ntfy.sh/", json={
+        async with ClientSession(timeout=ClientTimeout(total=15)) as session:
+            async with session.post("https://ntfy.sh", json={
                 "topic": NTFY_TOPIC, "title": title, "message": message, "tags": ["sparkles"],
-            })
-    except Exception:
-        pass
+            }) as response:
+                body = (await response.text())[:300]
+                if response.status != 200:
+                    print(f"ntfy: HTTP {response.status}: {body}", flush=True)
+                    return False, f"ntfy ответил ошибкой {response.status}: {body}"
+                return True, "Отправлено"
+    except Exception as error:
+        print(f"ntfy: {error!r}", flush=True)
+        return False, f"Не удалось связаться с ntfy.sh: {error}"
 
 
 KIND_DONE = {"image": "Картинка готова", "video": "Видео готово", "music": "Музыка готова"}
@@ -708,6 +715,11 @@ async def set_settings(request):
     return web.json_response({"idleMinutes": idle_minutes()})
 
 
+async def test_notify(request):
+    sent, detail = await notify("Pocket AI", "Проверка уведомлений: если вы это видите, всё работает.")
+    return web.json_response({"ok": sent, "detail": detail, "topic": NTFY_TOPIC})
+
+
 async def shutdown(request):
     """Switches the pod off at the user's request (the "Выключить" button in the app)."""
     if not os.environ.get("RUNPOD_POD_ID"):
@@ -743,6 +755,7 @@ def main():
     app.router.add_get("/api/settings", get_settings)
     app.router.add_post("/api/settings", set_settings)
     app.router.add_post("/api/shutdown", shutdown)
+    app.router.add_post("/api/test-notify", test_notify)
     app.on_startup.append(on_startup)
     web.run_app(app, host="0.0.0.0", port=8080, print=None)
 
