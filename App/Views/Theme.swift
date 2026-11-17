@@ -59,15 +59,30 @@ final class ThemeStore {
 
     private static let paletteKey = "themePalette"
     private static let appearanceKey = "themeAppearance"
+    private static let iconKey = "themeIcon"
 
     private(set) var palette: Palette
     private(set) var appearance: AppearanceMode
+    /// Palette id of the home-screen icon in use.
+    private(set) var iconID: String
 
     private init() {
         let defaults = UserDefaults.standard
         let savedPalette = defaults.string(forKey: Self.paletteKey)
         palette = Palette.all.first { $0.id == savedPalette } ?? Palette.all[0]
         appearance = AppearanceMode(rawValue: defaults.string(forKey: Self.appearanceKey) ?? "") ?? .system
+        iconID = defaults.string(forKey: Self.iconKey) ?? Palette.all[0].id
+    }
+
+    /// Changes the app icon on the home screen. iOS confirms the change with its own message.
+    @MainActor
+    func setIcon(_ id: String) {
+        guard Palette.all.contains(where: { $0.id == id }), id != iconID else { return }
+        let name: String? = id == Palette.all[0].id ? nil : "AppIcon-\(id)"
+        guard UIApplication.shared.supportsAlternateIcons else { return }
+        iconID = id
+        UserDefaults.standard.set(id, forKey: Self.iconKey)
+        UIApplication.shared.setAlternateIconName(name) { _ in }
     }
 
     @MainActor
@@ -152,26 +167,27 @@ struct AuroraBackground: View {
         ZStack {
             (dark ? Color(red: 0.035, green: 0.035, blue: 0.07) : Color(red: 0.965, green: 0.96, blue: 0.985))
 
+            // Radial gradients instead of blurred shapes: the same soft look at a fraction of the cost.
             GeometryReader { proxy in
                 let size = proxy.size
-                Circle()
-                    .fill(Theme.primary.opacity(dark ? 0.38 : 0.22))
-                    .frame(width: size.width * 0.9)
-                    .blur(radius: 110)
+                glow(Theme.primary.opacity(dark ? 0.42 : 0.26), diameter: size.width * 1.9)
                     .scaleEffect(scale)
-                    .offset(x: size.width * (-0.35 + 0.14 * shift), y: size.width * (-0.3 + 0.10 * shift))
-                Circle()
-                    .fill(Theme.tertiary.opacity(dark ? 0.22 : 0.18))
-                    .frame(width: size.width * 0.8)
-                    .blur(radius: 120)
+                    .position(
+                        x: size.width * (0.10 + 0.14 * shift),
+                        y: size.width * (0.15 + 0.10 * shift)
+                    )
+                glow(Theme.tertiary.opacity(dark ? 0.26 : 0.20), diameter: size.width * 1.8)
                     .scaleEffect(scale)
-                    .offset(x: size.width * (0.5 - 0.16 * shift), y: size.height * (0.25 + 0.06 * shift))
-                Circle()
-                    .fill(Theme.tint.opacity(dark ? 0.26 : 0.16))
-                    .frame(width: size.width * 0.9)
-                    .blur(radius: 130)
+                    .position(
+                        x: size.width * (0.95 - 0.16 * shift),
+                        y: size.height * (0.45 + 0.06 * shift)
+                    )
+                glow(Theme.tint.opacity(dark ? 0.30 : 0.18), diameter: size.width * 2.0)
                     .scaleEffect(scale)
-                    .offset(x: size.width * (-0.2 + 0.18 * shift), y: size.height * (0.72 - 0.07 * shift))
+                    .position(
+                        x: size.width * (0.25 + 0.18 * shift),
+                        y: size.height * (0.92 - 0.07 * shift)
+                    )
             }
         }
         .ignoresSafeArea()
@@ -198,6 +214,19 @@ struct AuroraBackground: View {
 }
 
 extension AuroraBackground {
+    private func glow(_ color: Color, diameter: CGFloat) -> some View {
+        Circle()
+            .fill(
+                RadialGradient(
+                    colors: [color, color.opacity(0)],
+                    center: .center,
+                    startRadius: 0,
+                    endRadius: diameter / 2
+                )
+            )
+            .frame(width: diameter, height: diameter)
+    }
+
     private func startDrift() {
         withAnimation(.easeInOut(duration: 16).repeatForever(autoreverses: true)) {
             drift = true
@@ -207,21 +236,28 @@ extension AuroraBackground {
 
 /// Frosted card used for panels and list rows.
 struct GlassCard: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
     var cornerRadius: CGFloat = 22
+    /// Real background blur. Costly, so it is only used for the few elements that float over content.
+    var blurred = false
 
     func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-            )
+            .background {
+                if blurred {
+                    shape.fill(.ultraThinMaterial)
+                } else {
+                    shape.fill(colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.6))
+                }
+            }
+            .overlay(shape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
     }
 }
 
 extension View {
-    func glassCard(cornerRadius: CGFloat = 22) -> some View {
-        modifier(GlassCard(cornerRadius: cornerRadius))
+    func glassCard(cornerRadius: CGFloat = 22, blurred: Bool = false) -> some View {
+        modifier(GlassCard(cornerRadius: cornerRadius, blurred: blurred))
     }
 }
 
@@ -234,10 +270,17 @@ struct OrbLogo: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(Theme.accent)
-                .blur(radius: size * 0.28)
-                .opacity(pulse ? 0.75 : 0.45)
-                .scaleEffect(pulse ? 1.12 : 0.96)
+                .fill(
+                    RadialGradient(
+                        colors: [Theme.tint.opacity(0.7), Theme.tint.opacity(0)],
+                        center: .center,
+                        startRadius: size * 0.3,
+                        endRadius: size * 0.85
+                    )
+                )
+                .frame(width: size * 1.7, height: size * 1.7)
+                .opacity(pulse ? 1 : 0.6)
+                .scaleEffect(pulse ? 1.08 : 0.94)
             Circle()
                 .fill(Theme.accent)
                 .rotationEffect(.degrees(spin ? 360 : 0))

@@ -195,6 +195,37 @@ struct SettingsView: View {
             }
             .sensoryFeedback(.selection, trigger: theme.palette.id)
 
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Иконка приложения")
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 14) {
+                        ForEach(Palette.all) { palette in
+                            let isSelected = palette.id == theme.iconID
+                            Button {
+                                theme.setIcon(palette.id)
+                            } label: {
+                                Image("IconPreview-\(palette.id)")
+                                    .resizable()
+                                    .frame(width: 52, height: 52)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                    .padding(4)
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                            .strokeBorder(palette.tint, lineWidth: 2)
+                                            .opacity(isSelected ? 1 : 0)
+                                    }
+                                    .scaleEffect(isSelected ? 1 : 0.92)
+                                    .animation(.spring(response: 0.4, dampingFraction: 0.55), value: isSelected)
+                            }
+                            .buttonStyle(PressableStyle(scale: 0.9))
+                            .accessibilityLabel("Иконка \(palette.name)")
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 2)
+                }
+            }
+
             Toggle(isOn: Binding(
                 get: { model.settings.pauseMotionWhileAnswering },
                 set: { model.settings.pauseMotionWhileAnswering = $0 }
@@ -210,7 +241,7 @@ struct SettingsView: View {
         } header: {
             Text("Темы")
         } footer: {
-            Text("Светлый или тёмный режим и цвет оформления. «Замирать во время ответа» останавливает движение фона, пока нейросеть пишет ответ, чтобы графический чип был занят только ей.")
+            Text("Светлый или тёмный режим, цвет оформления и иконка на домашнем экране. «Замирать во время ответа» останавливает движение фона, пока нейросеть пишет ответ, чтобы графический чип был занят только ей.")
         }
     }
 

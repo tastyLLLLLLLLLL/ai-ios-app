@@ -15,24 +15,24 @@ struct ModelsView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                LazyVStack(alignment: .leading, spacing: 14) {
                     Text("Модель скачивается один раз и дальше работает без интернета. Загрузка продолжается, даже если свернуть приложение.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 4)
 
-                    ForEach(Array(ModelCatalog.models.enumerated()), id: \.element.id) { index, item in
-                        CatalogModelCard(item: item)
-                            .opacity(appeared ? 1 : 0)
-                            .offset(y: appeared ? 0 : 18)
-                            .animation(.smooth.delay(Double(index) * 0.06), value: appeared)
+                    ForEach(ModelGroup.allCases) { group in
+                        groupHeader(icon: group.icon, title: group.title, subtitle: group.subtitle)
+                        ForEach(ModelCatalog.models(in: group)) { item in
+                            CatalogModelCard(item: item)
+                        }
                     }
 
-                    Text("Свои модели")
-                        .font(.headline)
-                        .padding(.top, 10)
-                        .padding(.horizontal, 4)
-
+                    groupHeader(
+                        icon: "tray.and.arrow.down.fill",
+                        title: "Свои модели",
+                        subtitle: "Любая модель в формате GGUF — по ссылке или из «Файлов»"
+                    )
                     ForEach(store.customEntries, id: \.self) { fileName in
                         CustomModelCard(fileName: fileName)
                             .transition(.opacity.combined(with: .scale(scale: 0.96)))
@@ -71,6 +71,10 @@ struct ModelsView: View {
                         .padding(.horizontal, 4)
                 }
                 .padding(16)
+                // One light fade for the whole list instead of animating every card separately.
+                .opacity(appeared ? 1 : 0)
+                .offset(y: appeared ? 0 : 10)
+                .animation(.easeOut(duration: 0.22), value: appeared)
                 .animation(.smooth, value: store.customEntries)
             }
             .background(AuroraBackground())
@@ -104,6 +108,29 @@ struct ModelsView: View {
                 Text("Нужна прямая ссылка, которая заканчивается на .gguf.")
             }
         }
+    }
+}
+
+extension ModelsView {
+    /// Heading that separates groups of models.
+    private func groupHeader(icon: String, title: String, subtitle: String) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(Theme.accent, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.headline)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 14)
+        .padding(.horizontal, 4)
     }
 }
 

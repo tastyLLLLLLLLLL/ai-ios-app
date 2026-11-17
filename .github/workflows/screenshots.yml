@@ -8,6 +8,8 @@ on:
     branches: [main]
     paths:
       - scripts/screenshots.sh
+      - App/**
+      - project.yml
       - .github/workflows/screenshots.yml
   workflow_dispatch:
 

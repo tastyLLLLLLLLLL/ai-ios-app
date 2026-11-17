@@ -1,6 +1,7 @@
 import PhotosUI
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct PendingPhoto: Identifiable {
     let id = UUID()
@@ -73,9 +74,10 @@ struct ChatView: View {
                         MessageRow(
                             message: message,
                             isLast: message.id == messages.last?.id,
-                            isGenerating: model.isGenerating,
+                            isStreaming: model.isGenerating && message.id == messages.last?.id,
                             onRegenerate: { model.regenerate() }
                         )
+                        .equatable()
                         .transition(
                             .asymmetric(
                                 insertion: message.role == .user
@@ -113,7 +115,7 @@ struct ChatView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            .glassCard(cornerRadius: 18)
+            .glassCard(cornerRadius: 18, blurred: true)
             .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }
@@ -134,6 +136,12 @@ struct InputBar: View {
 
     @State private var pickedItems: [PhotosPickerItem] = []
     @State private var showVisionHint = false
+    @State private var showGallery = false
+    @State private var showCamera = false
+    @State private var showFiles = false
+
+    private var cameraAvailable: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
+    private var photoSlotsLeft: Int { max(0, Self.maxPhotos - photos.count) }
 
     private static let maxPhotos = 3
 
@@ -188,7 +196,7 @@ struct InputBar: View {
                 .accessibilityLabel(isGenerating ? "Остановить" : "Отправить")
             }
         }
-        .glassCard(cornerRadius: 24)
+        .glassCard(cornerRadius: 24, blurred: true)
         .shadow(color: .black.opacity(0.12), radius: 16, y: 6)
         .animation(.smooth, value: photos.count)
         .onChange(of: pickedItems) {
@@ -200,9 +208,31 @@ struct InputBar: View {
                     guard photos.count < Self.maxPhotos else { break }
                     if let data = try? await item.loadTransferable(type: Data.self),
                        let image = UIImage(data: data) {
-                        photos.append(PendingPhoto(image: image.downscaled(maxSide: 1024)))
+                        add(image)
                     }
                 }
+            }
+        }
+        .photosPicker(
+            isPresented: $showGallery,
+            selection: $pickedItems,
+            maxSelectionCount: max(1, photoSlotsLeft),
+            matching: .images
+        )
+        .fullScreenCover(isPresented: $showCamera) {
+            CameraPicker { image in
+                add(image)
+            }
+            .ignoresSafeArea()
+        }
+        .fileImporter(isPresented: $showFiles, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
+            guard case .success(let urls) = result else { return }
+            for url in urls {
+                let scoped = url.startAccessingSecurityScopedResource()
+                if let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
+                    add(image)
+                }
+                if scoped { url.stopAccessingSecurityScopedResource() }
             }
         }
         .alert("Эта модель не видит фото", isPresented: $showVisionHint) {
@@ -224,15 +254,28 @@ struct InputBar: View {
             .padding(.bottom, 5)
 
         if canAttachPhotos {
-            PhotosPicker(
-                selection: $pickedItems,
-                maxSelectionCount: Self.maxPhotos,
-                matching: .images
-            ) {
+            Menu {
+                Button {
+                    showGallery = true
+                } label: {
+                    Label("Выбрать из галереи", systemImage: "photo.on.rectangle")
+                }
+                if cameraAvailable {
+                    Button {
+                        showCamera = true
+                    } label: {
+                        Label("Сфотографировать", systemImage: "camera")
+                    }
+                }
+                Button {
+                    showFiles = true
+                } label: {
+                    Label("Выбрать из «Файлов»", systemImage: "folder")
+                }
+            } label: {
                 icon
             }
-            .buttonStyle(PressableStyle(scale: 0.88))
-            .disabled(photos.count >= Self.maxPhotos)
+            .disabled(photoSlotsLeft == 0)
             .accessibilityLabel("Прикрепить фото")
         } else {
             Button {
@@ -244,6 +287,11 @@ struct InputBar: View {
             .disabled(!canSend)
             .accessibilityLabel("Прикрепить фото")
         }
+    }
+
+    private func add(_ image: UIImage) {
+        guard photos.count < Self.maxPhotos else { return }
+        photos.append(PendingPhoto(image: image.downscaled(maxSide: 1024)))
     }
 
     private func thumbnail(_ photo: PendingPhoto) -> some View {
@@ -273,15 +321,18 @@ struct InputBar: View {
 
 // MARK: - Messages
 
-struct MessageRow: View {
+/// Equatable so that rows which did not change are not redrawn on every new token.
+struct MessageRow: View, Equatable {
     let message: ChatMessage
     let isLast: Bool
-    let isGenerating: Bool
+    let isStreaming: Bool
     let onRegenerate: () -> Void
 
     @State private var copied = false
 
-    private var isStreaming: Bool { isLast && isGenerating }
+    static func == (lhs: MessageRow, rhs: MessageRow) -> Bool {
+        lhs.message == rhs.message && lhs.isLast == rhs.isLast && lhs.isStreaming == rhs.isStreaming
+    }
 
     var body: some View {
         if message.role == .user {
@@ -552,5 +603,50 @@ struct EmptyStateView: View {
         }
         .padding(18)
         .glassCard()
+    }
+}
+
+// MARK: - Camera
+
+/// The system camera, used to take a photo for a message.
+struct CameraPicker: UIViewControllerRepresentable {
+    let onImage: (UIImage) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ controller: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onImage: onImage, dismiss: { dismiss() })
+    }
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        private let onImage: (UIImage) -> Void
+        private let dismiss: () -> Void
+
+        init(onImage: @escaping (UIImage) -> Void, dismiss: @escaping () -> Void) {
+            self.onImage = onImage
+            self.dismiss = dismiss
+        }
+
+        func imagePickerController(
+            _ picker: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            if let image = info[.originalImage] as? UIImage {
+                onImage(image)
+            }
+            dismiss()
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            dismiss()
+        }
     }
 }

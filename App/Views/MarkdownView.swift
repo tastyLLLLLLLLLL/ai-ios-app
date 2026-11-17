@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 /// Lightweight Markdown renderer for model replies: paragraphs, headings, lists, quotes and code blocks.
-struct MarkdownView: View {
+struct MarkdownView: View, Equatable {
     let text: String
 
     var body: some View {

@@ -161,9 +161,22 @@ final class AppModel {
                 )
                 let started = Date()
                 var pieces = 0
+                // Tokens are shown in small batches: redrawing the screen for each one wastes time.
+                var pending = ""
+                var lastFlush = Date.distantPast
                 for try await piece in engine.generate(prompt: prompt, images: images, options: options) {
                     pieces += 1
-                    updateLastMessage(in: conversationID) { $0.text += piece }
+                    pending += piece
+                    if Date().timeIntervalSince(lastFlush) >= 0.06 {
+                        let chunk = pending
+                        pending = ""
+                        lastFlush = Date()
+                        updateLastMessage(in: conversationID) { $0.text += chunk }
+                    }
+                }
+                if !pending.isEmpty {
+                    let chunk = pending
+                    updateLastMessage(in: conversationID) { $0.text += chunk }
                 }
                 let elapsed = Date().timeIntervalSince(started)
                 if pieces > 1, elapsed > 0 {
@@ -236,10 +249,19 @@ final class AppModel {
         }
         let marker = LlamaEngine.mediaMarker
         let useImages = canSeeImages
+        // Photos are decoded away from the main thread so the interface stays responsive.
+        let imageNames = useImages ? Set(conversation.messages.flatMap(\.imageNames)) : []
+        let decoded: [String: EngineImage] = await Task.detached(priority: .userInitiated) {
+            var result: [String: EngineImage] = [:]
+            for name in imageNames {
+                result[name] = ImageStore.engineImage(named: name)
+            }
+            return result
+        }.value
         var turns: [Turn] = conversation.messages.dropLast()
             .filter { !$0.isError }
             .map { message -> Turn in
-                let images = useImages ? message.imageNames.compactMap { ImageStore.engineImage(named: $0) } : []
+                let images = useImages ? message.imageNames.compactMap { decoded[$0] } : []
                 return Turn(
                     isUser: message.role == .user,
                     text: message.role == .user ? message.text : message.answer,

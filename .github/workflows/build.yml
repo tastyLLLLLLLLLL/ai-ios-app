@@ -89,6 +89,11 @@ jobs:
           fi
           exit $code
 
+      - name: Check that the alternate app icons are included
+        run: |
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIcons:CFBundleAlternateIcons" \
+            build/Build/Products/Release-iphoneos/PocketAI.app/Info.plist | grep -c "AppIcon-"
+
       - name: Package the .ipa
         run: |
           mkdir Payload
