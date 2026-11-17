@@ -317,6 +317,18 @@ private struct JobCard: View {
                 .font(.subheadline)
                 .lineLimit(3)
 
+            if let english = job.englishPrompt, english != job.prompt {
+                Label {
+                    Text("Модель получила: \(english)")
+                        .lineLimit(4)
+                } icon: {
+                    Image(systemName: "character.bubble")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            }
+
             content
         }
         .padding(14)

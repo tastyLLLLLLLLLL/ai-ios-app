@@ -393,26 +393,38 @@ def has_cyrillic(text):
     return any("а" <= ch.lower() <= "я" or ch.lower() == "ё" for ch in text)
 
 
+STYLE_RULES = (
+    "Keep the subject and the art style exactly as the user asked. If they want a cartoon, anime, "
+    "pixel art, a drawing, a toy or a character from a cartoon, say so explicitly at the very start "
+    "(for example: 'cartoon illustration of ...'), and never describe it as a real photograph, even if "
+    "the user used the word 'photo'. Only describe a photograph when the user clearly wants a realistic one."
+)
+
+
 async def translate(text, purpose):
-    """Translates a Russian description into English with an installed text model; returns the original on failure."""
+    """Turns a Russian description into an English prompt with an installed text model.
+    Returns (prompt, True) on success, (original text, False) when nothing could translate it."""
     if not text or not has_cyrillic(text):
-        return text
+        return text, True
     try:
-        async with ClientSession(timeout=ClientTimeout(total=120)) as session:
+        async with ClientSession(timeout=ClientTimeout(total=300)) as session:
             async with session.get(f"{OLLAMA}/api/tags") as response:
                 installed = [m["name"] for m in (await response.json()).get("models", [])]
             model = next((name for prefix in TRANSLATORS for name in installed if name.startswith(prefix)), None)
             if not model:
-                return text
+                return text, False
+            system = (f"Translate the user's text into English and write it as a {purpose}. "
+                      "Keep every detail the user gave. ")
+            if "image" in purpose or "video" in purpose:
+                system += STYLE_RULES + " "
+            system += "Reply with the English prompt only, without quotes or comments."
             payload = {
                 "model": model,
                 "stream": False,
                 "think": False,
                 "keep_alive": 0,
                 "messages": [
-                    {"role": "system", "content":
-                        f"Translate the user's text into English as a {purpose}. "
-                        "Keep every detail. Reply with the translation only, without quotes or comments."},
+                    {"role": "system", "content": system},
                     {"role": "user", "content": text},
                 ],
             }
@@ -426,9 +438,12 @@ async def translate(text, purpose):
         answer = result.get("message", {}).get("content", "").strip()
         if "</think>" in answer:
             answer = answer.split("</think>", 1)[1].strip()
-        return answer.strip('"').strip() or text
+        answer = answer.strip('"').strip()
+        if not answer or has_cyrillic(answer):
+            return text, False
+        return answer, True
     except Exception:
-        return text
+        return text, False
 
 
 # ---------------------------------------------------------------------------
@@ -587,6 +602,7 @@ async def create_job(request):
         "finished": None,
         "outputs": [],
         "error": None,
+        "englishPrompt": None,
         "prompt_id": None,
     }
     jobs[job["id"]] = job
@@ -599,17 +615,26 @@ async def submit_job(job, body):
     kind, model_id, prompt = job["kind"], job["model"], job["prompt"]
     try:
         seed = int(body.get("seed") or random.randint(1, 2**31 - 1))
+        purposes = {
+            "image": "detailed prompt for an image generation model",
+            "video": "detailed prompt for a video generation model",
+            "music": "comma-separated list of music style tags (genre, mood, instruments, vocals)",
+        }
+        english, ok = await translate(prompt, purposes.get(kind, purposes["image"]))
+        if not ok:
+            await finish_job(job, error="Не удалось перевести описание на английский — переводчик на сервере не ответил. "
+                                        "Попробуйте ещё раз или напишите описание по-английски.")
+            return
+        job["englishPrompt"] = english
+        save_jobs()
         if kind == "image":
-            english = await translate(prompt, "detailed prompt for an image generation model")
             width, height = int(body.get("width", 1024)), int(body.get("height", 1024))
             workflow = image_workflow(model_id, english, body.get("negative") or DEFAULT_NEGATIVE, width, height, seed)
         elif kind == "video":
-            english = await translate(prompt, "detailed prompt for a video generation model")
             width, height = int(body.get("width", 1280)), int(body.get("height", 704))
             workflow = video_workflow(english, body.get("negative") or DEFAULT_NEGATIVE, width, height,
                                       int(body.get("seconds", 3)), seed)
         else:
-            english = await translate(prompt, "comma-separated list of music style tags (genre, mood, instruments, vocals)")
             workflow = music_workflow(english, body.get("lyrics") or "[instrumental]", int(body.get("seconds", 60)), seed)
 
         await unload_text_models()

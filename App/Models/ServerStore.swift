@@ -63,6 +63,8 @@ struct ServerJob: Identifiable, Codable, Hashable {
     let finished: Double?
     let outputs: [JobOutput]
     let error: String?
+    /// The English prompt the server sent to the model.
+    let englishPrompt: String?
 
     var isActive: Bool { status == "queued" || status == "running" }
     var createdDate: Date { Date(timeIntervalSince1970: created) }
