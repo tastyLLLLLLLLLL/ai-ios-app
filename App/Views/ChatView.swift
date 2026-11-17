@@ -49,8 +49,8 @@ struct ChatView: View {
                     showModels: $showModels,
                     focused: $inputFocused,
                     isGenerating: model.isGenerating,
-                    canSend: model.models.selectedFile != nil,
-                    canAttachPhotos: model.models.canSeePhotos,
+                    canSend: model.hasActiveModel,
+                    canAttachPhotos: !model.useOnline && model.models.canSeePhotos,
                     onSend: {
                         let text = draft
                         let images = photos.map(\.image)
@@ -579,7 +579,7 @@ struct EmptyStateView: View {
                 .offset(y: appeared ? 0 : 12)
                 .animation(.smooth.delay(0.08), value: appeared)
 
-                if model.models.selectedFile == nil {
+                if !model.hasActiveModel {
                     noModelCard
                         .opacity(appeared ? 1 : 0)
                         .offset(y: appeared ? 0 : 16)

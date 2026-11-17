@@ -10,6 +10,7 @@ struct ModelsView: View {
     @State private var linkError = false
     @State private var appeared = false
     @State private var source: ModelSource = .offline
+    @State private var showStudio = false
 
     private enum ModelSource: String, CaseIterable, Identifiable {
         case offline
@@ -33,7 +34,7 @@ struct ModelsView: View {
                 .padding(.top, 8)
 
                 if source == .online {
-                    OnlineModelsPlaceholder()
+                    OnlineModelsView(showStudio: $showStudio)
                         .padding(16)
                         .transition(.opacity.combined(with: .move(edge: .trailing)))
                 } else {
@@ -109,7 +110,14 @@ struct ModelsView: View {
                     Button("Готово") { dismiss() }
                 }
             }
-            .onAppear { appeared = true }
+            .onAppear {
+                appeared = true
+                if model.useOnline { source = .online }
+            }
+            .sheet(isPresented: $showStudio) {
+                StudioView()
+                    .respectsAnimationSetting()
+            }
             .fileImporter(isPresented: $showImporter, allowedContentTypes: [.data]) { result in
                 if case .success(let url) = result {
                     store.importFile(from: url)
@@ -187,12 +195,12 @@ struct CatalogModelCard: View {
             supportsUncensored: item.uncensored != nil,
             error: store.error(for: item),
             state: state,
-            isSelected: store.selectedFile == item.fileName,
+            isSelected: !model.useOnline && store.selectedFile == item.fileName,
             actionTitle: "Скачать",
             actionIcon: "arrow.down.circle.fill",
             onAction: { store.download(item) },
             onCancel: { store.cancelDownload(item) },
-            onSelect: { store.select(item.fileName) },
+            onSelect: { model.chooseOffline(item.fileName) },
             onDelete: { store.delete(item.fileName) }
         ) {
             if item.uncensored != nil, store.installed.contains(item.fileName) {
@@ -234,12 +242,12 @@ struct CustomModelCard: View {
             supportsUncensored: false,
             error: store.errors[fileName],
             state: state,
-            isSelected: store.selectedFile == fileName,
+            isSelected: !model.useOnline && store.selectedFile == fileName,
             actionTitle: "Убрать из списка",
             actionIcon: "xmark.circle.fill",
             onAction: { store.clearError(fileName) },
             onCancel: { store.cancelDownload(fileName) },
-            onSelect: { store.select(fileName) },
+            onSelect: { model.chooseOffline(fileName) },
             onDelete: { store.delete(fileName) }
         ) {
             EmptyView()
@@ -480,53 +488,3 @@ private struct UncensoredRow: View {
     }
 }
 
-// MARK: - Online
-
-/// Placeholder for models that will run on the user's own server.
-private struct OnlineModelsPlaceholder: View {
-    private let categories: [(icon: String, title: String)] = [
-        ("text.bubble.fill", "Текст"),
-        ("chevron.left.forwardslash.chevron.right", "Код"),
-        ("photo.fill", "Картинки"),
-        ("music.note", "Музыка"),
-        ("film.fill", "Видео")
-    ]
-
-    var body: some View {
-        VStack(spacing: 18) {
-            Image(systemName: "server.rack")
-                .font(.system(size: 38, weight: .light))
-                .foregroundStyle(.white)
-                .frame(width: 84, height: 84)
-                .glass(Circle(), tint: Theme.tint)
-
-            VStack(spacing: 6) {
-                Text("Онлайн-модели — скоро")
-                    .font(.title3.weight(.semibold))
-                Text("Здесь появятся модели с вашего сервера: большие и умные, которые не помещаются в телефон. Нужен интернет.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 10)], spacing: 10) {
-                ForEach(categories, id: \.title) { category in
-                    VStack(spacing: 6) {
-                        Image(systemName: category.icon)
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(Theme.tint)
-                        Text(category.title)
-                            .font(.caption.weight(.medium))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .glassCard(cornerRadius: 16)
-                    .opacity(0.75)
-                }
-            }
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity)
-        .glassCard(cornerRadius: 26)
-    }
-}

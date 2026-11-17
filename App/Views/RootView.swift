@@ -6,6 +6,7 @@ struct RootView: View {
     @State private var showChats = false
     @State private var showModels = false
     @State private var showSettings = false
+    @State private var showStudio = false
     @State private var launched = false
     /// How far the chat panel is being dragged closed (negative values).
     @State private var drawerDrag: CGFloat = 0
@@ -47,6 +48,10 @@ struct RootView: View {
             ModelsView()
                 .respectsAnimationSetting()
         }
+        .sheet(isPresented: $showStudio) {
+            StudioView()
+                .respectsAnimationSetting()
+        }
         .sheet(isPresented: $showSettings) {
             SettingsView()
                 .respectsAnimationSetting()
@@ -77,6 +82,7 @@ struct RootView: View {
             case "models": showModels = true
             case "settings": showSettings = true
             case "chats": openChats()
+            case "studio": showStudio = true
             default: break
             }
             if let prompt = defaults.string(forKey: "demoPrompt") {
@@ -120,6 +126,15 @@ struct RootView: View {
                         modelChip
                     }
                     ToolbarItemGroup(placement: .topBarTrailing) {
+                        if model.server.isConnected, !model.server.mediaModels.isEmpty {
+                            Button {
+                                showStudio = true
+                            } label: {
+                                Image(systemName: "wand.and.stars")
+                                    .symbolEffect(.bounce, value: showStudio)
+                            }
+                            .accessibilityLabel("Студия")
+                        }
                         Button {
                             showSettings = true
                         } label: {
@@ -145,7 +160,12 @@ struct RootView: View {
             showModels = true
         } label: {
             HStack(spacing: 5) {
-                if model.isUncensoredActive {
+                if model.useOnline {
+                    Image(systemName: "cloud.fill")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Theme.accent)
+                        .transition(.scale.combined(with: .opacity))
+                } else if model.isUncensoredActive {
                     Image(systemName: "lock.open.fill")
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(Theme.accent)

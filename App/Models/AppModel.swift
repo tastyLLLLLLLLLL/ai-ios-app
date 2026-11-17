@@ -21,6 +21,9 @@ final class AppModel {
     private(set) var isGenerating = false
 
     let models = ModelStore()
+    let server = ServerStore()
+    /// True when chats go to a model on the user's server instead of the phone.
+    private(set) var useOnline = UserDefaults.standard.bool(forKey: "useOnlineModel")
 
     private let engine = LlamaEngine()
     private var loadedFile: String?
@@ -52,6 +55,9 @@ final class AppModel {
             self?.notifyDownload(fileName: fileName, error: error)
         }
         settings.applyDisplay()
+        server.onJobFinished = { [weak self] job, success in
+            self?.notifyJob(job, success: success)
+        }
         BackgroundAnswer.shared.onExpire = { [weak self] in
             self?.backgroundTimeExpired()
         }
@@ -72,8 +78,45 @@ final class AppModel {
     }
 
     var activeModelName: String {
+        if useOnline {
+            return server.selectedTextModel?.name ?? "Сервер"
+        }
         guard let file = models.selectedFile else { return "Нет модели" }
         return ModelCatalog.displayName(forFile: file)
+    }
+
+    /// A model is chosen and chatting is possible.
+    var hasActiveModel: Bool {
+        useOnline ? server.selectedTextModelID != nil : models.selectedFile != nil
+    }
+
+    func chooseOnline(_ id: String) {
+        server.selectTextModel(id)
+        useOnline = true
+        UserDefaults.standard.set(true, forKey: "useOnlineModel")
+    }
+
+    func chooseOffline(_ file: String) {
+        models.select(file)
+        useOnline = false
+        UserDefaults.standard.set(false, forKey: "useOnlineModel")
+    }
+
+    /// Switches back to a model on the phone, if one is downloaded.
+    func chooseOfflineIfPossible() {
+        useOnline = false
+        UserDefaults.standard.set(false, forKey: "useOnlineModel")
+    }
+
+    private func notifyJob(_ job: ServerJob, success: Bool) {
+        guard settings.notificationsEnabled, UIApplication.shared.applicationState != .active else { return }
+        let title: String
+        switch job.kind {
+        case "image": title = success ? "Картинка готова" : "Картинка не получилась"
+        case "video": title = success ? "Видео готово" : "Видео не получилось"
+        default: title = success ? "Музыка готова" : "Музыка не получилась"
+        }
+        NotificationService.shared.post(title: title, body: String(job.prompt.prefix(120)))
     }
 
     func newChat() {
@@ -122,7 +165,7 @@ final class AppModel {
     func send(_ text: String, photos: [UIImage] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let imageNames = photos.compactMap { ImageStore.save($0) }
-        guard !trimmed.isEmpty || !imageNames.isEmpty, !isGenerating, models.selectedFile != nil else {
+        guard !trimmed.isEmpty || !imageNames.isEmpty, !isGenerating, hasActiveModel else {
             ImageStore.delete(imageNames)
             return
         }
@@ -151,7 +194,7 @@ final class AppModel {
     }
 
     func regenerate() {
-        guard !isGenerating, models.selectedFile != nil,
+        guard !isGenerating, hasActiveModel,
               let index = conversations.firstIndex(where: { $0.id == currentID }),
               let last = conversations[index].messages.last, last.role == .assistant else { return }
         conversations[index].messages[conversations[index].messages.count - 1] = ChatMessage(role: .assistant, text: "")
@@ -170,7 +213,11 @@ final class AppModel {
     /// and continued when the user comes back.
     func handleBackground() {
         guard isGenerating, let id = generatingConversationID else { return }
-        if BackgroundAnswer.shared.isRunning {
+        if useOnline, BackgroundAnswer.shared.isRunning {
+            // The server keeps writing; iOS lets the connection run while the background task lasts.
+            return
+        }
+        if !useOnline, BackgroundAnswer.shared.isRunning {
             continueOnProcessor(id)
         } else {
             pause(id, reason: "iPhone не даёт нейросети работать в фоне. Откройте приложение — ответ допишется сам.")
@@ -256,6 +303,9 @@ final class AppModel {
         generationTask = Task {
             let started = Date()
             do {
+                if useOnline {
+                    try await streamOnline(conversationID, resume: resume)
+                } else {
                 try await ensureModelLoaded(useGPU: !onProcessor)
                 let (builtPrompt, images, prefill) = try await buildPrompt(for: conversationID)
                 var prompt = builtPrompt
@@ -293,6 +343,7 @@ final class AppModel {
                 if pieces > 1, elapsed > 0 {
                     updateLastMessage(in: conversationID) { $0.tokensPerSecond = Double(pieces) / elapsed }
                 }
+                }
             } catch is CancellationError {
                 // Stopped by the user.
             } catch {
@@ -312,6 +363,75 @@ final class AppModel {
             UIApplication.shared.isIdleTimerDisabled = false
             BackgroundAnswer.shared.finish(success: true)
             finishNotice(for: conversationID, startedAt: started)
+        }
+    }
+
+    /// Streams an answer from a text model on the user's server.
+    private func streamOnline(_ conversationID: UUID, resume: Bool) async throws {
+        guard let modelID = server.selectedTextModelID else { throw ServerError.notConfigured }
+        if resume {
+            // The server cannot continue a half-written answer, so it starts over.
+            updateLastMessage(in: conversationID) { $0.text = "" }
+        }
+        guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return }
+
+        var system = settings.systemPrompt
+        if settings.uncensored {
+            system = AppSettings.uncensoredInstruction + "\n\n" + system
+        }
+        var messages: [[String: String]] = [["role": "system", "content": system]]
+        for message in conversation.messages.dropLast().suffix(40) where !message.isError {
+            let text = message.role == .user ? message.text : message.answer
+            guard !text.isEmpty else { continue }
+            messages.append(["role": message.role == .user ? "user" : "assistant", "content": text])
+        }
+
+        let started = Date()
+        var pieces = 0
+        var inThinking = false
+        var pending = ""
+        var lastFlush = Date.distantPast
+        let stream = server.chat(
+            model: modelID,
+            messages: messages,
+            think: settings.thinkingEnabled,
+            temperature: settings.temperature,
+            maxTokens: settings.maxResponseTokens
+        )
+        for try await chunk in stream {
+            // Reasoning is wrapped in <think> tags so the chat shows it folded, as for models on the phone.
+            if !chunk.thinking.isEmpty {
+                if !inThinking {
+                    pending += "<think>"
+                    inThinking = true
+                }
+                pending += chunk.thinking
+            }
+            if !chunk.content.isEmpty {
+                if inThinking {
+                    pending += "</think>\n\n"
+                    inThinking = false
+                }
+                pending += chunk.content
+            }
+            pieces += 1
+            answerTokens += 1
+            if Date().timeIntervalSince(lastFlush) >= 0.06 {
+                let text = pending
+                pending = ""
+                lastFlush = Date()
+                updateLastMessage(in: conversationID) { $0.text += text }
+                BackgroundAnswer.shared.report(completedUnits: answerTokens)
+            }
+        }
+        if inThinking { pending += "</think>" }
+        if !pending.isEmpty {
+            let text = pending
+            updateLastMessage(in: conversationID) { $0.text += text }
+        }
+        let elapsed = Date().timeIntervalSince(started)
+        if pieces > 1, elapsed > 0 {
+            updateLastMessage(in: conversationID) { $0.tokensPerSecond = Double(pieces) / elapsed }
         }
     }
 
