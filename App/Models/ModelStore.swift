@@ -32,6 +32,8 @@ final class ModelStore {
     private(set) var errors: [String: String] = [:]
     private(set) var selectedFile: String?
     private(set) var isImporting = false
+    /// Called after a download ends: (file name, error message or nil on success). Not called on cancel.
+    var onDownloadFinished: ((String, String?) -> Void)?
 
     init() {
         selectedFile = UserDefaults.standard.string(forKey: Self.selectedKey)
@@ -283,5 +285,18 @@ final class ModelStore {
             errors[fileName] = message
         }
         refresh()
+        if message != "cancelled" {
+            onDownloadFinished?(fileName, message)
+        }
+    }
+
+    /// Human-readable name of a downloaded file, including vision modules and uncensored variants.
+    func describe(fileName: String) -> String {
+        for model in ModelCatalog.models {
+            if model.fileName == fileName { return "Модель «\(model.name)»" }
+            if model.vision?.fileName == fileName { return "Модуль зрения для «\(model.name)»" }
+            if model.uncensored?.fileName == fileName { return "Версия без цензуры для «\(model.name)»" }
+        }
+        return "Модель «\(ModelCatalog.displayName(forFile: fileName))»"
     }
 }

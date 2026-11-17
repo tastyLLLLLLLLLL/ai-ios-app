@@ -90,8 +90,12 @@ struct RootView: View {
             }
         }
         .onChange(of: scenePhase) {
-            // iOS does not allow GPU work in the background, so generation must stop.
-            if scenePhase == .background { model.stop() }
+            // iOS does not allow GPU work in the background: the answer pauses and continues on return.
+            switch scenePhase {
+            case .background: model.handleBackground()
+            case .active: model.handleForeground()
+            default: break
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
             model.unloadModel()

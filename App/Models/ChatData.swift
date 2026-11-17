@@ -96,6 +96,7 @@ struct AppSettings: Codable, Equatable {
     var uncensored = false
     /// Freeze the moving background while the model is answering.
     var pauseMotionWhileAnswering = true
+    var notificationsEnabled = false
 
     init() {}
 
@@ -109,6 +110,7 @@ struct AppSettings: Codable, Equatable {
         maxResponseTokens = try values.decodeIfPresent(Int.self, forKey: .maxResponseTokens) ?? 1024
         uncensored = try values.decodeIfPresent(Bool.self, forKey: .uncensored) ?? false
         pauseMotionWhileAnswering = try values.decodeIfPresent(Bool.self, forKey: .pauseMotionWhileAnswering) ?? true
+        notificationsEnabled = try values.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? false
     }
 
     static func load() -> AppSettings {

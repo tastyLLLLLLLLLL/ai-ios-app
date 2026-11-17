@@ -30,6 +30,11 @@ final class AppModel {
     private var loadedVisionPath: String?
     private var canSeeImages = false
     private var generationTask: Task<Void, Never>?
+    /// Chat whose answer is being written.
+    private var generatingConversationID: UUID?
+    /// Chat whose answer was paused because the app went to the background.
+    private var pausedConversationID: UUID?
+    private static let pausedNotificationID = "answer-paused"
 
     private static var storageURL: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -37,6 +42,9 @@ final class AppModel {
     }
 
     init() {
+        models.onDownloadFinished = { [weak self] fileName, error in
+            self?.notifyDownload(fileName: fileName, error: error)
+        }
         if let data = try? Data(contentsOf: Self.storageURL),
            let saved = try? JSONDecoder().decode([Conversation].self, from: data) {
             conversations = saved
@@ -141,25 +149,77 @@ final class AppModel {
     }
 
     func stop() {
+        pausedConversationID = nil
         generationTask?.cancel()
         engine.cancelAll()
     }
 
-    private func generate(in conversationID: UUID) {
+    // MARK: - Background
+
+    /// iOS does not let the model use the graphics chip in the background, so the answer is paused
+    /// and continued when the user comes back.
+    func handleBackground() {
+        guard isGenerating, let id = generatingConversationID else { return }
+        stop()
+        pausedConversationID = id
+        if settings.notificationsEnabled {
+            NotificationService.shared.post(
+                id: Self.pausedNotificationID,
+                title: "Ответ на паузе",
+                body: "iPhone не даёт нейросети работать в фоне. Откройте приложение — ответ допишется сам."
+            )
+        }
+    }
+
+    func handleForeground() {
+        NotificationService.shared.remove(id: Self.pausedNotificationID)
+        guard let id = pausedConversationID else { return }
+        pausedConversationID = nil
+        let previous = generationTask
+        Task {
+            await previous?.value
+            guard !isGenerating,
+                  let conversation = conversations.first(where: { $0.id == id }),
+                  conversation.messages.last?.role == .assistant else { return }
+            generate(in: id, resume: true)
+        }
+    }
+
+    private func notifyDownload(fileName: String, error: String?) {
+        guard settings.notificationsEnabled else { return }
+        let name = models.describe(fileName: fileName)
+        if let error {
+            NotificationService.shared.post(title: "Не удалось скачать", body: "\(name): \(error)")
+        } else {
+            NotificationService.shared.post(title: "Скачано", body: "\(name) готова к работе без интернета.")
+        }
+    }
+
+    // MARK: - Generation
+
+    /// - Parameter resume: continue the unfinished last answer instead of starting it over.
+    private func generate(in conversationID: UUID, resume: Bool = false) {
         isGenerating = true
+        generatingConversationID = conversationID
         MotionStore.shared.paused = settings.pauseMotionWhileAnswering
+        // Keeps the screen on while the model writes, so the phone does not lock and pause it.
+        UIApplication.shared.isIdleTimerDisabled = true
         generationTask = Task {
+            let started = Date()
             do {
                 try await ensureModelLoaded()
-                let (prompt, images, prefill) = try await buildPrompt(for: conversationID)
-                if !prefill.isEmpty {
+                let (builtPrompt, images, prefill) = try await buildPrompt(for: conversationID)
+                var prompt = builtPrompt
+                if resume {
+                    let partial = conversations.first(where: { $0.id == conversationID })?.messages.last?.text ?? ""
+                    prompt += partial
+                } else if !prefill.isEmpty {
                     updateLastMessage(in: conversationID) { $0.text = prefill }
                 }
                 let options = GenerationOptions(
                     temperature: Float(settings.temperature),
                     maxTokens: settings.maxResponseTokens
                 )
-                let started = Date()
                 var pieces = 0
                 // Tokens are shown in small batches: redrawing the screen for each one wastes time.
                 var pending = ""
@@ -193,8 +253,25 @@ final class AppModel {
                 }
             }
             isGenerating = false
+            generatingConversationID = nil
             MotionStore.shared.paused = false
+            UIApplication.shared.isIdleTimerDisabled = false
             save()
+            finishNotice(for: conversationID, startedAt: started)
+        }
+    }
+
+    /// A light vibration after a long answer, or a notification if the app is not in front.
+    private func finishNotice(for conversationID: UUID, startedAt: Date) {
+        guard pausedConversationID == nil,
+              let message = conversations.first(where: { $0.id == conversationID })?.messages.last,
+              message.role == .assistant, !message.isError, !message.answer.isEmpty else { return }
+        if UIApplication.shared.applicationState != .active {
+            if settings.notificationsEnabled {
+                NotificationService.shared.post(title: "Ответ готов", body: String(message.answer.prefix(140)))
+            }
+        } else if Date().timeIntervalSince(startedAt) > 8 {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
         }
     }
 

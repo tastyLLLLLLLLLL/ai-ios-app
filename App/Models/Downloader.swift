@@ -9,6 +9,8 @@ final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendabl
     var onProgress: (@Sendable (String, Int64, Int64) -> Void)?
     /// (file name, error message or nil on success)
     var onFinish: (@Sendable (String, String?) -> Void)?
+    /// Handed over by iOS when it wakes the app for finished background downloads.
+    var backgroundCompletion: (() -> Void)?
 
     private let lock = NSLock()
     private var failures: [String: String] = [:]
@@ -97,6 +99,13 @@ final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendabl
             try FileManager.default.moveItem(at: location, to: destination)
         } catch {
             setFailure("Не удалось сохранить файл: \(error.localizedDescription)", for: fileName)
+        }
+    }
+
+    func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        DispatchQueue.main.async {
+            self.backgroundCompletion?()
+            self.backgroundCompletion = nil
         }
     }
 

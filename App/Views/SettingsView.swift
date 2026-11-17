@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmDeleteChats = false
     @State private var appeared = false
+    @State private var notificationsDenied = false
 
     private var uncensoredState: UncensoredState { model.models.uncensoredState }
 
@@ -39,6 +40,18 @@ struct SettingsView: View {
                         if model.settings.uncensored {
                             uncensoredStatus
                                 .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+                    }
+
+                    SettingsSection(
+                        footer: "Придёт уведомление, когда скачается модель. Если свернуть приложение во время ответа, iPhone ставит нейросеть на паузу — придёт напоминание, а когда вернётесь, ответ допишется сам. Пока идёт ответ, экран не гаснет."
+                    ) {
+                        Toggle(isOn: $model.settings.notificationsEnabled) {
+                            SettingsLabel(
+                                title: "Уведомления",
+                                icon: model.settings.notificationsEnabled ? "bell.badge.fill" : "bell.fill",
+                                bounce: model.settings.notificationsEnabled
+                            )
                         }
                     }
 
@@ -154,6 +167,24 @@ struct SettingsView: View {
                 if new.uncensored, !old.uncensored, uncensoredState == .notDownloaded {
                     model.models.downloadUncensoredVariant()
                 }
+                if new.notificationsEnabled, !old.notificationsEnabled {
+                    Task {
+                        if !(await NotificationService.shared.requestPermission()) {
+                            model.settings.notificationsEnabled = false
+                            notificationsDenied = true
+                        }
+                    }
+                }
+            }
+            .alert("Уведомления выключены", isPresented: $notificationsDenied) {
+                Button("Открыть настройки iPhone") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                }
+                Button("Отмена", role: .cancel) {}
+            } message: {
+                Text("Разрешите уведомления для Pocket AI в настройках iPhone.")
             }
             .confirmationDialog("Удалить все чаты без возможности восстановить?", isPresented: $confirmDeleteChats, titleVisibility: .visible) {
                 Button("Удалить все", role: .destructive) { model.deleteAllChats() }
