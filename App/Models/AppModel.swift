@@ -58,6 +58,12 @@ final class AppModel {
         server.onJobFinished = { [weak self] job, success in
             self?.notifyJob(job, success: success)
         }
+        server.onJobsChanged = { [weak self] jobs in
+            self?.followStudioJobs(jobs)
+        }
+        server.onLowBalance = { [weak self] value in
+            self?.notifyLowBalance(value)
+        }
         BackgroundAnswer.shared.onExpire = { [weak self] in
             self?.backgroundTimeExpired()
         }
@@ -117,6 +123,40 @@ final class AppModel {
         default: title = success ? "Музыка готова" : "Музыка не получилась"
         }
         NotificationService.shared.post(title: title, body: String(job.prompt.prefix(120)))
+    }
+
+    /// Keeps the app awake in the background while the server makes something (iOS 26),
+    /// with the progress on the lock screen, so the "ready" notification comes from Pocket AI.
+    private func followStudioJobs(_ jobs: [ServerJob]) {
+        let studio = BackgroundAnswer.studio
+        let active = jobs.filter(\.isActive)
+        guard !active.isEmpty else {
+            if studio.isActive { studio.finish(success: true) }
+            return
+        }
+        if !studio.isActive, BackgroundAnswer.isSupported, UIApplication.shared.applicationState == .active {
+            let title: String
+            if active.count > 1 {
+                title = "Pocket AI создаёт работы: \(active.count)"
+            } else {
+                switch active[0].kind {
+                case "image": title = "Pocket AI рисует картинку"
+                case "video": title = "Pocket AI создаёт видео"
+                default: title = "Pocket AI сочиняет музыку"
+                }
+            }
+            studio.begin(title: title, subtitle: String(active[0].prompt.prefix(60)), totalUnits: 100)
+        }
+        let progress = active.map(\.progress).reduce(0, +) / Double(active.count)
+        studio.report(completedUnits: Int(progress * 100))
+    }
+
+    private func notifyLowBalance(_ value: Double) {
+        guard settings.notificationsEnabled else { return }
+        NotificationService.shared.post(
+            title: "Баланс RunPod заканчивается",
+            body: String(format: "Осталось $%.2f. Пополните баланс на runpod.io, чтобы сервер не остановился.", value)
+        )
     }
 
     func newChat() {
@@ -281,6 +321,9 @@ final class AppModel {
 
     func handleForeground() {
         NotificationService.shared.remove(id: Self.pausedNotificationID)
+        if server.hasRunPodKey {
+            Task { await server.refreshBalance() }
+        }
         guard let id = pausedConversationID else { return }
         pausedConversationID = nil
         let previous = generationTask
@@ -310,7 +353,8 @@ final class AppModel {
     private func generate(in conversationID: UUID, resume: Bool = false, onProcessor: Bool = false) {
         if !resume {
             answerTokens = 0
-            if settings.backgroundAnswers, BackgroundAnswer.isSupported {
+            // Online answers only wait for the server, so they always ask for background time.
+            if settings.backgroundAnswers || useOnline, BackgroundAnswer.isSupported {
                 let title = conversations.first(where: { $0.id == conversationID })?.displayTitle ?? "Новый чат"
                 BackgroundAnswer.shared.begin(
                     title: "Pocket AI пишет ответ",

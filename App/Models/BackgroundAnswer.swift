@@ -5,7 +5,10 @@ import Foundation
 /// iOS shows the progress on the lock screen and may still stop the task at any time.
 @MainActor
 final class BackgroundAnswer {
+    /// For chat answers.
     static let shared = BackgroundAnswer()
+    /// For pictures, video and music being made on the server.
+    static let studio = BackgroundAnswer()
 
     /// True while iOS has granted background time for the current answer.
     private(set) var isRunning = false
@@ -17,6 +20,9 @@ final class BackgroundAnswer {
     private var requestedID: String?
 
     private init() {}
+
+    /// Background time was asked for or granted and is not finished yet.
+    var isActive: Bool { isRunning || requestedID != nil }
 
     static var isSupported: Bool {
         #if compiler(>=6.2)

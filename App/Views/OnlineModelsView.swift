@@ -33,6 +33,69 @@ struct OnlineModelsView: View {
         .onAppear {
             address = server.address
         }
+        .task {
+            await server.refreshBalance()
+        }
+    }
+
+    // MARK: Balance
+
+    private var balanceRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Label("Баланс RunPod", systemImage: "dollarsign.circle.fill")
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                if let balance = server.balance {
+                    Text(balance, format: .currency(code: "USD"))
+                        .font(.title3.weight(.bold))
+                        .monospacedDigit()
+                        .foregroundStyle(balance < ServerStore.lowBalanceLimit ? Color.orange : Color.primary)
+                        .contentTransition(.numericText())
+                } else if server.balanceError == nil {
+                    ProgressView()
+                }
+                Button {
+                    Task { await server.refreshBalance() }
+                } label: {
+                    Image(systemName: "arrow.clockwise").font(.footnote.weight(.semibold))
+                }
+                .accessibilityLabel("Обновить баланс")
+            }
+            if let error = server.balanceError {
+                Text(error).font(.caption).foregroundStyle(.red)
+            } else if let balance = server.balance {
+                Text(balanceNote(balance))
+                    .font(.caption)
+                    .foregroundStyle(balance < ServerStore.lowBalanceLimit ? Color.orange : Color.secondary)
+            }
+            Link(destination: URL(string: "https://www.runpod.io/console/user/billing")!) {
+                Label("Пополнить на сайте RunPod", systemImage: "arrow.up.right.square")
+                    .font(.footnote.weight(.medium))
+            }
+        }
+        .animation(.smooth, value: server.balance)
+    }
+
+    private func balanceNote(_ balance: Double) -> String {
+        var parts: [String] = []
+        if let spend = server.spendPerHour, spend > 0.001 {
+            parts.append(String(format: "Сейчас списывается $%.2f в час", spend))
+            let hours = balance / spend
+            parts.append(hours < 48
+                ? String(format: "хватит примерно на %.0f ч", hours.rounded(.down))
+                : String(format: "хватит примерно на %.0f дн.", (hours / 24).rounded(.down)))
+        } else {
+            parts.append("Сейчас сервер ничего не тратит, кроме хранения диска")
+        }
+        var text = parts.joined(separator: ", ") + "."
+        if balance < ServerStore.lowBalanceLimit {
+            text += " Баланс почти закончился — пополните, иначе RunPod остановит сервер и может удалить диск."
+        }
+        if let updated = server.balanceUpdated {
+            text += " Обновлено в " + updated.formatted(date: .omitted, time: .shortened) + "."
+        }
+        return text
     }
 
     // MARK: Connection
@@ -227,6 +290,8 @@ struct OnlineModelsView: View {
                 Text("Если сервер выключен, приложение само включит его, когда вы напишете онлайн-модели или создадите что-то в Студии.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Divider()
+                balanceRow
             } else {
                 Text("Чтобы включать сервер из приложения, нужен ключ RunPod: на сайте RunPod откройте Settings → API Keys → Create API Key, выберите права Read/Write и скопируйте ключ. Он хранится только на этом iPhone, никому его не пересылайте.")
                     .font(.caption)

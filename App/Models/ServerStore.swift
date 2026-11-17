@@ -153,8 +153,20 @@ final class ServerStore {
     /// RunPod account key, needed only to switch a stopped server on. Kept in the keychain.
     private(set) var hasRunPodKey = false
 
+    /// RunPod account balance in dollars and what is being spent per hour, when a key is saved.
+    private(set) var balance: Double?
+    private(set) var spendPerHour: Double?
+    private(set) var balanceUpdated: Date?
+    private(set) var balanceError: String?
+    /// Called once when the balance drops below `lowBalanceLimit`.
+    var onLowBalance: ((Double) -> Void)?
+    static let lowBalanceLimit = 3.0
+
     /// True while the server is loading a model into its graphics card before answering.
     private(set) var modelLoading = false
+
+    /// Called whenever the list of jobs changes, to follow their progress.
+    var onJobsChanged: (([ServerJob]) -> Void)?
 
     /// Called when a job finishes or fails: (job, finished successfully).
     var onJobFinished: ((ServerJob, Bool) -> Void)?
@@ -166,6 +178,7 @@ final class ServerStore {
         address = UserDefaults.standard.string(forKey: Self.addressKey) ?? ""
         password = Keychain.read() ?? ""
         hasRunPodKey = Keychain.read(account: "runpod") != nil
+        if hasRunPodKey { Task { await refreshBalance() } }
         selectedTextModelID = UserDefaults.standard.string(forKey: Self.modelKey)
         if isConfigured {
             Task { await refresh() }
@@ -272,6 +285,53 @@ final class ServerStore {
             Keychain.save(trimmed, account: "runpod")
         }
         hasRunPodKey = !trimmed.isEmpty
+        balance = nil
+        spendPerHour = nil
+        balanceError = nil
+        if hasRunPodKey { Task { await refreshBalance() } }
+    }
+
+    /// Reads the account balance from RunPod.
+    func refreshBalance() async {
+        guard let key = Keychain.read(account: "runpod") else { return }
+        var request = URLRequest(url: URL(string: "https://api.runpod.io/graphql")!, timeoutInterval: 20)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "query": "query { myself { clientBalance currentSpendPerHr } }"
+        ])
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let me = (json?["data"] as? [String: Any])?["myself"] as? [String: Any]
+            guard code == 200, let value = (me?["clientBalance"] as? NSNumber)?.doubleValue else {
+                let reason = ((json?["errors"] as? [[String: Any]])?.first?["message"] as? String) ?? "код \(code)"
+                balanceError = code == 401 || code == 403
+                    ? "RunPod не дал прочитать баланс: у ключа нет прав. Создайте ключ с правами Read/Write."
+                    : "Не удалось узнать баланс: \(reason.prefix(150))"
+                return
+            }
+            balance = value
+            spendPerHour = (me?["currentSpendPerHr"] as? NSNumber)?.doubleValue
+            balanceUpdated = Date()
+            balanceError = nil
+            checkLowBalance(value)
+        } catch {
+            balanceError = "Не удалось узнать баланс: нет связи с RunPod."
+        }
+    }
+
+    /// Warns once when the balance falls below the limit; warns again after a top-up and a new drop.
+    private func checkLowBalance(_ value: Double) {
+        let key = "runpodLowBalanceWarned"
+        if value >= Self.lowBalanceLimit {
+            UserDefaults.standard.set(false, forKey: key)
+        } else if !UserDefaults.standard.bool(forKey: key) {
+            UserDefaults.standard.set(true, forKey: key)
+            onLowBalance?(value)
+        }
     }
 
     /// Asks the server to send a test notification through ntfy and returns what happened.
@@ -557,6 +617,7 @@ final class ServerStore {
         body["prompt"] = prompt
         let job: ServerJob = try await send("/api/jobs", method: "POST", body: body)
         jobs.insert(job, at: 0)
+        onJobsChanged?(jobs)
         startPolling()
     }
 
@@ -592,6 +653,7 @@ final class ServerStore {
                 onJobFinished?(job, job.status == "done")
             }
         }
+        onJobsChanged?(fresh)
         if fresh.contains(where: \.isActive) { startPolling() }
     }
 
