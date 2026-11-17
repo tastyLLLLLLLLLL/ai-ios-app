@@ -225,7 +225,9 @@ struct AuroraBackground: View {
         ZStack {
             (dark ? Color(red: 0.035, green: 0.035, blue: 0.07) : Color(red: 0.965, green: 0.96, blue: 0.985))
 
-            if ThemeStore.shared.backgroundStyle != .aurora {
+            if ThemeStore.shared.backgroundStyle == .none {
+                EmptyView()
+            } else if ThemeStore.shared.backgroundStyle != .aurora {
                 PatternBackground(style: ThemeStore.shared.backgroundStyle, dark: dark, animated: Motion.isRunning)
                     .scaleEffect(scale)
             } else if MotionStore.shared.lightMode {
@@ -521,6 +523,7 @@ extension View {
 // MARK: - Background styles
 
 enum BackgroundStyle: String, CaseIterable, Identifiable {
+    case none
     case aurora
     case stars
     case waves
@@ -532,6 +535,7 @@ enum BackgroundStyle: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .none: return "Без фона"
         case .aurora: return "Сияние"
         case .stars: return "Звёзды"
         case .waves: return "Волны"
@@ -565,6 +569,8 @@ struct PatternBackground: View {
         let style = style
         return Canvas { context, size in
             switch style {
+            case .none:
+                break
             case .aurora:
                 PatternBackground.glows(&context, size, colors, dark)
             case .stars:
@@ -714,5 +720,15 @@ struct PatternBackground: View {
                 radius: radius
             )
         }
+    }
+}
+
+/// Calm one-colour background for every screen except the chat, which shows the chosen style.
+struct ScreenBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        (colorScheme == .dark ? Color(red: 0.035, green: 0.035, blue: 0.07) : Color(red: 0.965, green: 0.96, blue: 0.985))
+            .ignoresSafeArea()
     }
 }

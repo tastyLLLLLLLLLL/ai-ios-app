@@ -442,21 +442,23 @@ private struct OnlineModelCard: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 Spacer(minLength: 0)
-                Image(systemName: "cloud.fill")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
             }
             Text(item.summary)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            FlowLayout(spacing: 6) {
-                ForEach(ModelPerk.perks(for: item)) { perk in
-                    Label(perk.text, systemImage: perk.icon)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(perk.isDrawback ? Color.orange : Theme.tint)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background((perk.isDrawback ? Color.orange : Theme.tint).opacity(0.14), in: Capsule())
+            let perks = Array(ModelPerk.perks(for: item).prefix(3))
+            if !perks.isEmpty {
+                FlowLayout(spacing: 6) {
+                    ForEach(perks) { perk in
+                        let color = perk.isDrawback ? Color.orange : Theme.tint
+                        Label(perk.text, systemImage: perk.icon)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(color)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(color.opacity(0.14), in: Capsule())
+                            .overlay(Capsule().strokeBorder(color.opacity(0.35), lineWidth: 1))
+                    }
                 }
             }
             if isSelected {

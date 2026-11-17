@@ -102,7 +102,7 @@ struct ModelsView: View {
                 .transition(.opacity.combined(with: .move(edge: .leading)))
                 }
             }
-            .background(AuroraBackground())
+            .background(ScreenBackground())
             .navigationTitle("Модели")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

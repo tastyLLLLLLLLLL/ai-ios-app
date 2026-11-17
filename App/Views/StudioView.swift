@@ -74,7 +74,7 @@ struct StudioView: View {
                 .padding(16)
             }
             .scrollDismissesKeyboard(.interactively)
-            .background(AuroraBackground())
+            .background(ScreenBackground())
             .navigationTitle("Студия")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

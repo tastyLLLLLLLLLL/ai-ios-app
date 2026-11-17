@@ -41,7 +41,7 @@ struct RootView: View {
                 }
             }
         }
-        .background(AuroraBackground())
+        .background(ScreenBackground())
         .tint(Theme.tint)
         .respectsAnimationSetting()
         .sheet(isPresented: $showModels) {
@@ -121,6 +121,7 @@ struct RootView: View {
             ChatView(showModels: $showModels)
                 .opacity(launched ? 1 : 0)
                 .scaleEffect(launched ? 1 : 0.96)
+                .background(AuroraBackground())
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
@@ -470,9 +471,8 @@ private struct DrawerPush: ViewModifier {
         if light {
             content.offset(x: width * 0.12 * progress)
         } else {
-            // No mask here: clipping the screen cut off strips at the top and bottom for a moment.
+            // Only a slide: scaling the screen showed frames around it while the panel closed.
             content
-                .scaleEffect(1 - 0.06 * progress, anchor: .trailing)
                 .offset(x: width * 0.18 * progress)
         }
     }

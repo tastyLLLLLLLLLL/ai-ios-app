@@ -171,7 +171,7 @@ struct SettingsView: View {
                 .animation(.easeOut(duration: 0.25), value: appeared)
             }
             .scrollDismissesKeyboard(.interactively)
-            .background(AuroraBackground())
+            .background(ScreenBackground())
             .tint(Theme.tint)
             .onAppear { appeared = true }
             .animation(.easeInOut(duration: 0.5), value: ThemeStore.shared.palette.id)
