@@ -6,3 +6,5 @@ Support/Info.plist
 *.ipa
 Payload/
 llama.zip
+__pycache__/
+*.pyc
