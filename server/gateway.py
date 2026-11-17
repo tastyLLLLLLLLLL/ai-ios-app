@@ -332,7 +332,7 @@ async def free_media_memory():
 
 last_activity = time.time()
 active_chats = 0
-DEFAULT_IDLE_MINUTES = 20
+DEFAULT_IDLE_MINUTES = 10
 
 
 def idle_minutes():

@@ -143,7 +143,7 @@ final class ServerStore {
     private(set) var selectedTextModelID: String?
     private(set) var power: Power = .unknown
     /// Minutes without use after which the server switches itself off (0 = never).
-    private(set) var idleMinutes = 20
+    private(set) var idleMinutes = 10
     /// RunPod account key, needed only to switch a stopped server on. Kept in the keychain.
     private(set) var hasRunPodKey = false
 
