@@ -112,7 +112,9 @@ struct ModelsView: View {
             }
             .onAppear {
                 appeared = true
-                if model.useOnline { source = .online }
+                if model.useOnline || UserDefaults.standard.string(forKey: "demoModelsTab") == "online" {
+                    source = .online
+                }
             }
             .sheet(isPresented: $showStudio) {
                 StudioView()

@@ -69,6 +69,9 @@ struct RootView: View {
             if let palette = defaults.string(forKey: "demoPalette") {
                 ThemeStore.shared.setPalette(palette)
             }
+            if let style = defaults.string(forKey: "demoBackground").flatMap(BackgroundStyle.init(rawValue:)) {
+                ThemeStore.shared.setBackground(style)
+            }
             if let mode = defaults.string(forKey: "demoAppearance").flatMap(AppearanceMode.init(rawValue:)) {
                 ThemeStore.shared.setAppearance(mode)
             }

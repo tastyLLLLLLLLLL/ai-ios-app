@@ -17,7 +17,8 @@ limit() {
 }
 step() { echo "[$(date +%H:%M:%S)] $*"; }
 
-UDID=$(xcrun simctl list devices available | grep -E "iPhone 1[67] Pro \(" | head -1 | grep -oE "[0-9A-F-]{36}")
+UDID=$(xcrun simctl list devices available | grep -E "iPhone 1[678] Pro \(" | head -1 | grep -oE "[0-9A-F-]{36}")
+[ -n "$UDID" ] || UDID=$(xcrun simctl list devices available | grep -E "iPhone" | head -1 | grep -oE "[0-9A-F-]{36}")
 echo "Simulator: $UDID"
 step "booting"
 limit 120 xcrun simctl boot "$UDID" || true
@@ -42,11 +43,6 @@ launch() {
   limit 120 xcrun simctl launch "$UDID" "$BUNDLE" -demoStill YES "$@" || echo "launch failed or timed out"
 }
 
-launch
-shot 01-first-launch 8
-launch -demoScreen models
-shot 02-models-empty 5
-
 DATA=$(xcrun simctl get_app_container "$UDID" "$BUNDLE" data)
 CHATS="$DATA/Documents/chats.json"
 mkdir -p "$DATA/Documents/Models"
@@ -65,42 +61,39 @@ wait_for_reply() {
   echo "Timed out waiting for the reply"
 }
 
-launch
-shot 03-home 5
-
-# Themes: other colour schemes and the forced light mode, then back to the defaults.
-launch -demoPalette sunset
-shot 03a-theme-sunset 5
-launch -demoPalette forest -demoAppearance light
-shot 03b-theme-forest-light 5
-launch -demoPalette ruby -demoAppearance dark -demoScreen settings
-shot 03c-theme-settings 5
-launch -demoPalette ocean -demoAppearance system
-sleep 3
-launch -demoScreen settings
-shot 04-settings 5
+# Screens without waiting for the model.
+launch -demoPalette ocean -demoAppearance dark -demoBackground aurora
+shot 01-home 8
 launch -demoScreen models
-shot 05-models-installed 5
+shot 02-models 6
+launch -demoScreen models -demoModelsTab online
+shot 03-online 6
+launch -demoScreen settings
+shot 04-settings 6
 
-# The build server has no GPU, so generation here is far slower than on a phone.
+# Themes and backgrounds.
+launch -demoPalette sunset -demoAppearance light -demoBackground waves
+shot 05-theme-sunset-waves 6
+launch -demoPalette forest -demoAppearance dark -demoBackground stars
+shot 06-theme-forest-stars 6
+launch -demoPalette lilac -demoAppearance dark -demoBackground grid
+shot 07-theme-lilac-retro 6
+launch -demoPalette ocean -demoAppearance dark -demoBackground aurora
+sleep 3
+
+# Answers from the model on the phone (the build server has no GPU, so this is slow).
 before=$(mtime)
 launch -demoPrompt "Объясни простыми словами, что такое чёрная дыра. Ответь в трёх-четырёх предложениях."
-shot 06-chat-loading 25
-wait_for_reply "$before" 420
-shot 07-chat 3
-limit 60 xcrun simctl ui "$UDID" appearance light || true
-shot 08-chat-light 6
-limit 60 xcrun simctl ui "$UDID" appearance dark || true
-launch -demoScreen chats
-shot 09-chats 6
+wait_for_reply "$before" 210
+shot 08-chat 3
 
 before=$(mtime)
 launch -demoPrompt "Напиши на Python функцию is_palindrome(s). Только код и одно предложение пояснения."
-wait_for_reply "$before" 480
-shot 10-code 3
+wait_for_reply "$before" 240
+shot 09-code 3
 
-launch -demoUncensored YES -demoScreen settings
-shot 11-settings-uncensored 6
+launch -demoScreen chats
+shot 10-chats 6
 
 # Photo question, answered by Gemma 3 4B with its vision module.
 if [ -n "${VISION_MODEL:-}" ] && [ -f "$VISION_MODEL" ]; then
@@ -109,9 +102,8 @@ if [ -n "${VISION_MODEL:-}" ] && [ -f "$VISION_MODEL" ]; then
   before=$(mtime)
   launch -demoModel gemma-3-4b-it-Q4_K_M.gguf -demoImage "$PWD/scripts/test-photo.jpg" \
     -demoPrompt "Что изображено на этой картинке? Ответь двумя предложениями."
-  shot 12-photo-loading 30
-  wait_for_reply "$before" 700
-  shot 13-photo 3
+  wait_for_reply "$before" 330
+  shot 11-photo 3
 fi
 
 echo "----- crash reports -----"
