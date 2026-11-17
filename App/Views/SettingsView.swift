@@ -279,34 +279,50 @@ struct SettingsView: View {
 
             Text("Иконка приложения")
                 .font(.subheadline.weight(.medium))
+            iconRow(title: "Под цвет темы", options: AppIconOption.themed)
+            iconRow(title: "Рисованные", options: AppIconOption.illustrated)
+
+        }
+    }
+
+    private func iconRow(title: String, options: [AppIconOption]) -> some View {
+        let theme = ThemeStore.shared
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 14) {
-                    ForEach(Palette.all) { palette in
-                        let isSelected = palette.id == theme.iconID
+                    ForEach(options) { option in
+                        let isSelected = option.id == theme.iconID
                         Button {
-                            theme.setIcon(palette.id)
+                            theme.setIcon(option.id)
                         } label: {
-                            Image("IconPreview-\(palette.id)")
-                                .resizable()
-                                .frame(width: 52, height: 52)
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                .padding(4)
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                        .strokeBorder(palette.tint, lineWidth: 2)
-                                        .opacity(isSelected ? 1 : 0)
-                                }
-                                .scaleEffect(isSelected ? 1 : 0.92)
-                                .animation(.spring(response: 0.4, dampingFraction: 0.55), value: isSelected)
+                            VStack(spacing: 5) {
+                                Image("IconPreview-\(option.id)")
+                                    .resizable()
+                                    .frame(width: 56, height: 56)
+                                    .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                                    .padding(4)
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 17, style: .continuous)
+                                            .strokeBorder(Theme.tint, lineWidth: 2)
+                                            .opacity(isSelected ? 1 : 0)
+                                    }
+                                    .scaleEffect(isSelected ? 1 : 0.92)
+                                    .animation(.spring(response: 0.4, dampingFraction: 0.55), value: isSelected)
+                                Text(option.name)
+                                    .font(.caption2.weight(isSelected ? .semibold : .regular))
+                                    .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                            }
                         }
                         .buttonStyle(PressableStyle(scale: 0.9))
-                        .accessibilityLabel("Иконка \(palette.name)")
+                        .accessibilityLabel("Иконка \(option.name)")
                     }
                 }
                 .padding(.vertical, 4)
                 .padding(.horizontal, 2)
             }
-
         }
     }
 

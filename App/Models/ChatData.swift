@@ -14,8 +14,19 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var tokensPerSecond: Double?
     /// File names of attached photos (see ImageStore).
     var images: [String]?
+    /// Names of attached documents, shown as chips.
+    var files: [String]?
+    /// Text of attached documents. Sent to the model but not shown in the bubble.
+    var fileContext: String?
 
     var imageNames: [String] { images ?? [] }
+    var fileNames: [String] { files ?? [] }
+
+    /// What the model receives for a user message: the text plus attached documents.
+    var promptText: String {
+        guard let fileContext, !fileContext.isEmpty else { return text }
+        return text + "\n\n" + fileContext
+    }
 
     /// Reasoning the model wrote inside <think> tags, if any.
     var thinking: String? {
@@ -54,6 +65,13 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         }
         return ThinkRange(content: contentStart..<text.endIndex, afterEnd: text.endIndex, closed: false)
     }
+}
+
+/// A document picked in the input bar, already turned into text.
+struct PendingDocument: Identifiable {
+    let id = UUID()
+    let name: String
+    let text: String
 }
 
 struct Conversation: Identifiable, Codable, Equatable {

@@ -162,14 +162,21 @@ final class AppModel {
 
     // MARK: - Generation
 
-    func send(_ text: String, photos: [UIImage] = []) {
+    func send(_ text: String, photos: [UIImage] = [], documents: [PendingDocument] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let imageNames = photos.compactMap { ImageStore.save($0) }
-        guard !trimmed.isEmpty || !imageNames.isEmpty, !isGenerating, hasActiveModel else {
+        guard !trimmed.isEmpty || !imageNames.isEmpty || !documents.isEmpty, !isGenerating, hasActiveModel else {
             ImageStore.delete(imageNames)
             return
         }
-        let text = trimmed.isEmpty ? "Что на этой фотографии?" : trimmed
+        let text: String
+        if !trimmed.isEmpty {
+            text = trimmed
+        } else if !documents.isEmpty {
+            text = documents.count == 1 ? "Посмотри этот файл." : "Посмотри эти файлы."
+        } else {
+            text = "Что на этой фотографии?"
+        }
 
         if current == nil {
             let conversation = Conversation()
@@ -184,6 +191,10 @@ final class AppModel {
         }
         var userMessage = ChatMessage(role: .user, text: text)
         if !imageNames.isEmpty { userMessage.images = imageNames }
+        if !documents.isEmpty {
+            userMessage.files = documents.map(\.name)
+            userMessage.fileContext = Self.fileContext(documents, limit: useOnline ? 40_000 : 6_000)
+        }
         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
             conversations[index].messages.append(userMessage)
             conversations[index].messages.append(ChatMessage(role: .assistant, text: ""))
@@ -191,6 +202,19 @@ final class AppModel {
         conversations[index].updated = Date()
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         generate(in: conversations[index].id)
+    }
+
+    /// Turns attached documents into text for the model, shortened to fit the model's memory.
+    private static func fileContext(_ documents: [PendingDocument], limit: Int) -> String {
+        let share = max(500, limit / max(1, documents.count))
+        return documents.map { document in
+            var body = document.text
+            if body.count > share {
+                body = String(body.prefix(share)) + "\n… (файл обрезан, он не помещается в память модели целиком)"
+            }
+            return "Файл «\(document.name)»:\n```\n\(body)\n```"
+        }
+        .joined(separator: "\n\n")
     }
 
     func regenerate() {
@@ -382,7 +406,7 @@ final class AppModel {
         }
         var messages: [[String: String]] = [["role": "system", "content": system]]
         for message in conversation.messages.dropLast().suffix(40) where !message.isError {
-            let text = message.role == .user ? message.text : message.answer
+            let text = message.role == .user ? message.promptText : message.answer
             guard !text.isEmpty else { continue }
             messages.append(["role": message.role == .user ? "user" : "assistant", "content": text])
         }
@@ -518,7 +542,7 @@ final class AppModel {
                 let images = useImages ? message.imageNames.compactMap { decoded[$0] } : []
                 return Turn(
                     isUser: message.role == .user,
-                    text: message.role == .user ? message.text : message.answer,
+                    text: message.role == .user ? message.promptText : message.answer,
                     images: images
                 )
             }

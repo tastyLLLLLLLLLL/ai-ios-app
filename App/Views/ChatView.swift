@@ -1,3 +1,4 @@
+import PDFKit
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -13,6 +14,7 @@ struct ChatView: View {
     @Binding var showModels: Bool
     @State private var draft = ""
     @State private var photos: [PendingPhoto] = []
+    @State private var documents: [PendingDocument] = []
     @FocusState private var inputFocused: Bool
 
     private var messages: [ChatMessage] {
@@ -27,9 +29,7 @@ struct ChatView: View {
     var body: some View {
         ZStack {
             if messages.isEmpty {
-                EmptyStateView(showModels: $showModels) { suggestion in
-                    model.send(suggestion)
-                }
+                EmptyStateView(showModels: $showModels)
                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
             } else {
                 messageList
@@ -46,17 +46,23 @@ struct ChatView: View {
                 InputBar(
                     draft: $draft,
                     photos: $photos,
+                    documents: $documents,
                     showModels: $showModels,
                     focused: $inputFocused,
                     isGenerating: model.isGenerating,
                     canSend: model.hasActiveModel,
                     canAttachPhotos: !model.useOnline && model.models.canSeePhotos,
+                    isOnline: model.useOnline,
                     onSend: {
                         let text = draft
                         let images = photos.map(\.image)
+                        let files = documents
                         draft = ""
-                        withAnimation(.smooth) { photos = [] }
-                        model.send(text, photos: images)
+                        withAnimation(.smooth) {
+                            photos = []
+                            documents = []
+                        }
+                        model.send(text, photos: images, documents: files)
                     },
                     onStop: { model.stop() }
                 )
@@ -181,11 +187,14 @@ struct ChatView: View {
 struct InputBar: View {
     @Binding var draft: String
     @Binding var photos: [PendingPhoto]
+    @Binding var documents: [PendingDocument]
     @Binding var showModels: Bool
     var focused: FocusState<Bool>.Binding
     let isGenerating: Bool
     let canSend: Bool
     let canAttachPhotos: Bool
+    /// Chats go to the user's server: the field gets a coloured outline and a cloud mark.
+    let isOnline: Bool
     let onSend: () -> Void
     let onStop: () -> Void
 
@@ -194,6 +203,10 @@ struct InputBar: View {
     @State private var showGallery = false
     @State private var showCamera = false
     @State private var showFiles = false
+    @State private var importingDocuments = false
+    @State private var fileError: String?
+
+    private static let documentTypes: [UTType] = [.pdf, .plainText, .text, .sourceCode, .json, .commaSeparatedText, .xml, .html]
 
     private var cameraAvailable: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
     private var photoSlotsLeft: Int { max(0, Self.maxPhotos - photos.count) }
@@ -201,18 +214,22 @@ struct InputBar: View {
     private static let maxPhotos = 3
 
     private var hasContent: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !photos.isEmpty
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !photos.isEmpty || !documents.isEmpty
     }
 
     private var sendEnabled: Bool { isGenerating || (hasContent && canSend) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if !photos.isEmpty {
+            if !photos.isEmpty || !documents.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(photos) { photo in
                             thumbnail(photo)
+                                .transition(.scale(scale: 0.6).combined(with: .opacity))
+                        }
+                        ForEach(documents) { document in
+                            documentChip(document)
                                 .transition(.scale(scale: 0.6).combined(with: .opacity))
                         }
                     }
@@ -225,11 +242,18 @@ struct InputBar: View {
             HStack(alignment: .bottom, spacing: 4) {
                 attachButton
 
-                TextField(canSend ? "Сообщение" : "Сначала скачайте модель", text: $draft, axis: .vertical)
+                TextField(placeholder, text: $draft, axis: .vertical)
                     .lineLimit(1...6)
                     .focused(focused)
                     .disabled(!canSend)
                     .padding(.vertical, 12)
+
+                Image(systemName: isOnline ? "cloud.fill" : "iphone")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(isOnline ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.secondary.opacity(0.6)))
+                    .contentTransition(.symbolEffect(.replace))
+                    .padding(.bottom, 16)
+                    .accessibilityLabel(isOnline ? "Модель на сервере" : "Модель на телефоне")
 
                 Button {
                     if isGenerating { onStop() } else { onSend() }
@@ -253,8 +277,14 @@ struct InputBar: View {
             }
         }
         .glassCard(cornerRadius: 24, blurred: true)
-        .shadow(color: .black.opacity(0.12), radius: 16, y: 6)
-        .animation(.smooth, value: photos.count)
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(Theme.accent, lineWidth: 1.5)
+                .opacity(isOnline ? 0.9 : 0)
+        )
+        .shadow(color: isOnline ? Theme.tint.opacity(0.28) : .black.opacity(0.12), radius: 16, y: 6)
+        .animation(.smooth, value: isOnline)
+        .animation(.smooth, value: photos.count + documents.count)
         .onChange(of: pickedItems) {
             let items = pickedItems
             guard !items.isEmpty else { return }
@@ -281,15 +311,30 @@ struct InputBar: View {
             }
             .ignoresSafeArea()
         }
-        .fileImporter(isPresented: $showFiles, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
+        .fileImporter(
+            isPresented: $showFiles,
+            allowedContentTypes: importingDocuments ? Self.documentTypes : [.image],
+            allowsMultipleSelection: true
+        ) { result in
             guard case .success(let urls) = result else { return }
             for url in urls {
                 let scoped = url.startAccessingSecurityScopedResource()
-                if let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                if importingDocuments {
+                    if let document = Self.readDocument(url) {
+                        documents.append(document)
+                    } else {
+                        fileError = "Не удалось прочитать «\(url.lastPathComponent)». Подходят текстовые файлы, код и PDF с текстом."
+                    }
+                } else if let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
                     add(image)
                 }
-                if scoped { url.stopAccessingSecurityScopedResource() }
             }
+        }
+        .alert("Файл не прочитан", isPresented: Binding(get: { fileError != nil }, set: { if !$0 { fileError = nil } })) {
+            Button("Понятно", role: .cancel) {}
+        } message: {
+            Text(fileError ?? "")
         }
         .alert("Эта модель не видит фото", isPresented: $showVisionHint) {
             Button("Открыть модели") { showModels = true }
@@ -299,50 +344,100 @@ struct InputBar: View {
         }
     }
 
-    @ViewBuilder
-    private var attachButton: some View {
-        let icon = Image(systemName: "photo.on.rectangle.angled")
-            .symbolEffect(.bounce, value: photos.count)
-            .font(.system(size: 18, weight: .medium))
-            .foregroundStyle(canAttachPhotos ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.secondary))
-            .frame(width: 40, height: 36)
-            .padding(.leading, 6)
-            .padding(.bottom, 5)
+    private var placeholder: String {
+        guard canSend else { return "Сначала выберите модель" }
+        return isOnline ? "Сообщение на сервер" : "Сообщение"
+    }
 
-        if canAttachPhotos {
-            Menu {
-                Button {
-                    showGallery = true
-                } label: {
-                    Label("Выбрать из галереи", systemImage: "photo.on.rectangle")
-                }
-                if cameraAvailable {
+    /// The "+" button: photos (for models that see them) and documents.
+    private var attachButton: some View {
+        Menu {
+            Section("Фото") {
+                if canAttachPhotos {
                     Button {
-                        showCamera = true
+                        showGallery = true
                     } label: {
-                        Label("Сфотографировать", systemImage: "camera")
+                        Label("Выбрать из галереи", systemImage: "photo.on.rectangle")
+                    }
+                    .disabled(photoSlotsLeft == 0)
+                    if cameraAvailable {
+                        Button {
+                            showCamera = true
+                        } label: {
+                            Label("Сфотографировать", systemImage: "camera")
+                        }
+                        .disabled(photoSlotsLeft == 0)
+                    }
+                    Button {
+                        importingDocuments = false
+                        showFiles = true
+                    } label: {
+                        Label("Фото из «Файлов»", systemImage: "photo.badge.plus")
+                    }
+                    .disabled(photoSlotsLeft == 0)
+                } else {
+                    Button {
+                        showVisionHint = true
+                    } label: {
+                        Label("Фото — нужна модель, которая видит фото", systemImage: "eye.slash")
                     }
                 }
+            }
+            Section("Файлы") {
                 Button {
+                    importingDocuments = true
                     showFiles = true
                 } label: {
-                    Label("Выбрать из «Файлов»", systemImage: "folder")
+                    Label("Документ, текст или код", systemImage: "doc.text")
                 }
-            } label: {
-                icon
             }
-            .disabled(photoSlotsLeft == 0)
-            .accessibilityLabel("Прикрепить фото")
-        } else {
-            Button {
-                showVisionHint = true
-            } label: {
-                icon
-            }
-            .buttonStyle(PressableStyle(scale: 0.88))
-            .disabled(!canSend)
-            .accessibilityLabel("Прикрепить фото")
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(canSend ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.secondary))
+                .frame(width: 34, height: 34)
+                .background(Theme.tint.opacity(canSend ? 0.14 : 0.06), in: Circle())
+                .symbolEffect(.bounce, value: photos.count + documents.count)
+                .padding(.leading, 7)
+                .padding(.bottom, 6)
         }
+        .disabled(!canSend)
+        .accessibilityLabel("Добавить файл")
+    }
+
+    /// Reads a document as text: PDF through PDFKit, everything else as UTF-8 (or Windows-1251).
+    private static func readDocument(_ url: URL) -> PendingDocument? {
+        let name = url.lastPathComponent
+        var text: String?
+        if url.pathExtension.lowercased() == "pdf" {
+            text = PDFDocument(url: url)?.string
+        } else if let data = try? Data(contentsOf: url) {
+            text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .windowsCP1251)
+        }
+        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return PendingDocument(name: name, text: text)
+    }
+
+    private func documentChip(_ document: PendingDocument) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "doc.text.fill")
+                .foregroundStyle(Theme.tint)
+            Text(document.name)
+                .font(.caption.weight(.medium))
+                .lineLimit(1)
+                .frame(maxWidth: 140)
+            Button {
+                withAnimation(.smooth) { documents.removeAll { $0.id == document.id } }
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(PressableStyle(scale: 0.8))
+            .accessibilityLabel("Убрать файл")
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 40)
+        .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func add(_ image: UIImage) {
@@ -405,6 +500,14 @@ struct MessageRow: View, Equatable {
                                     .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
                             )
                     }
+                }
+                ForEach(message.fileNames, id: \.self) { name in
+                    Label(name, systemImage: "doc.text.fill")
+                        .font(.caption.weight(.medium))
+                        .lineLimit(1)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.primary.opacity(0.08), in: Capsule())
                 }
                 Text(message.text)
                     .foregroundStyle(.white)
@@ -561,80 +664,59 @@ struct TypingDots: View {
 struct EmptyStateView: View {
     @Environment(AppModel.self) private var model
     @Binding var showModels: Bool
-    let onSuggestion: (String) -> Void
 
     @State private var appeared = false
-
-    private struct Suggestion: Identifiable {
-        let icon: String
-        let text: String
-        var id: String { text }
-    }
-
-    private let suggestions = [
-        Suggestion(icon: "lightbulb", text: "Объясни простыми словами, как работает нейросеть"),
-        Suggestion(icon: "envelope", text: "Помоги написать вежливое письмо с отказом"),
-        Suggestion(icon: "fork.knife", text: "Придумай ужин из курицы, риса и овощей"),
-        Suggestion(icon: "globe", text: "Переведи на английский: «Рад знакомству!»")
-    ]
+    @State private var greeting = Greeting.random()
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 22) {
-                OrbLogo(size: 60)
-                    .padding(.top, 48)
+            VStack(spacing: 18) {
+                PixelMonster(size: 92)
+                    .padding(.top, 70)
                     .scaleEffect(appeared ? 1 : 0.7)
                     .opacity(appeared ? 1 : 0)
                     .animation(.spring(response: 0.6, dampingFraction: 0.7), value: appeared)
 
                 VStack(spacing: 8) {
-                    Text("Чем помочь?")
-                        .font(.system(.title, design: .rounded).weight(.bold))
-                    Label("Работает без интернета, всё остаётся на телефоне", systemImage: "lock.fill")
-                        .font(.subheadline)
+                    Text(greeting.title)
+                        .font(.system(.largeTitle, design: .rounded).weight(.bold))
+                        .multilineTextAlignment(.center)
+                    Text(greeting.subtitle)
+                        .font(.title3)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
+                .padding(.horizontal, 12)
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 12)
                 .animation(.smooth.delay(0.08), value: appeared)
 
+                Label(
+                    model.useOnline ? "Работает на вашем сервере" : "Работает без интернета, всё остаётся на телефоне",
+                    systemImage: model.useOnline ? "cloud.fill" : "lock.fill"
+                )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .contentTransition(.opacity)
+                .opacity(appeared ? 1 : 0)
+                .animation(.smooth.delay(0.14), value: appeared)
+
                 if !model.hasActiveModel {
                     noModelCard
+                        .padding(.top, 8)
                         .opacity(appeared ? 1 : 0)
                         .offset(y: appeared ? 0 : 16)
-                        .animation(.smooth.delay(0.16), value: appeared)
-                } else {
-                    VStack(spacing: 10) {
-                        ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, suggestion in
-                            Button {
-                                onSuggestion(suggestion.text)
-                            } label: {
-                                HStack(spacing: 12) {
-                                    Image(systemName: suggestion.icon)
-                                        .foregroundStyle(Theme.accent)
-                                        .frame(width: 24)
-                                    Text(suggestion.text)
-                                        .font(.subheadline)
-                                        .multilineTextAlignment(.leading)
-                                    Spacer(minLength: 0)
-                                }
-                                .padding(14)
-                                .glassCard(cornerRadius: 18)
-                            }
-                            .buttonStyle(PressableStyle())
-                            .opacity(appeared ? 1 : 0)
-                            .offset(y: appeared ? 0 : 16)
-                            .animation(.smooth.delay(0.14 + Double(index) * 0.06), value: appeared)
-                        }
-                    }
+                        .animation(.smooth.delay(0.18), value: appeared)
                 }
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 24)
         }
         .scrollDismissesKeyboard(.interactively)
-        .onAppear { appeared = true }
+        .onAppear {
+            greeting = Greeting.random()
+            appeared = true
+        }
     }
 
     private var noModelCard: some View {
@@ -704,5 +786,50 @@ struct CameraPicker: UIViewControllerRepresentable {
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
             dismiss()
         }
+    }
+}
+
+// MARK: - Greeting
+
+/// Greeting on the empty chat screen, depending on the time of day.
+struct Greeting {
+    let title: String
+    let subtitle: String
+
+    static func random(at date: Date = Date()) -> Greeting {
+        let hour = Calendar.current.component(.hour, from: date)
+        let options: [(String, String)]
+        switch hour {
+        case 5..<12:
+            options = [
+                ("Доброе утро", "С чего начнём день?"),
+                ("Доброе утро ☀️", "Чем могу помочь?"),
+                ("Утро — время идей", "О чём подумаем?"),
+                ("Доброе утро", "Кофе уже есть? Тогда за дело")
+            ]
+        case 12..<18:
+            options = [
+                ("Добрый день", "Чем займёмся?"),
+                ("Добрый день", "Что будем делать сегодня?"),
+                ("Привет!", "Над чем поработаем?"),
+                ("Хороший день", "чтобы что-нибудь придумать")
+            ]
+        case 18..<23:
+            options = [
+                ("Добрый вечер", "Как прошёл день?"),
+                ("Добрый вечер 🌙", "Чем помочь?"),
+                ("Вечер — время подумать", "О чём поговорим?"),
+                ("Добрый вечер", "Что обсудим?")
+            ]
+        default:
+            options = [
+                ("Доброй ночи", "Не спится?"),
+                ("Ночь — время идей", "О чём подумаем?"),
+                ("Доброй ночи 🌌", "Я здесь, если нужно"),
+                ("Поздновато", "но я всегда на связи")
+            ]
+        }
+        let pick = options.randomElement() ?? options[0]
+        return Greeting(title: pick.0, subtitle: pick.1)
     }
 }

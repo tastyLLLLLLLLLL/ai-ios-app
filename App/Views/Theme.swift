@@ -28,6 +28,26 @@ struct Palette: Identifiable, Equatable {
     ]
 }
 
+/// A home-screen icon the user can choose.
+struct AppIconOption: Identifiable {
+    let id: String
+    let name: String
+
+    /// Icons drawn as pictures, in addition to one icon per colour theme.
+    static let illustrated: [AppIconOption] = [
+        AppIconOption(id: "monster", name: "Монстрик"),
+        AppIconOption(id: "rocket", name: "Ракета"),
+        AppIconOption(id: "planet", name: "Планета"),
+        AppIconOption(id: "neon", name: "Неон"),
+        AppIconOption(id: "retro", name: "Ретро"),
+        AppIconOption(id: "network", name: "Нейросеть")
+    ]
+
+    static let themed: [AppIconOption] = Palette.all.map { AppIconOption(id: $0.id, name: $0.name) }
+
+    static let all = themed + illustrated
+}
+
 enum AppearanceMode: String, CaseIterable, Identifiable {
     case system
     case light
@@ -77,7 +97,7 @@ final class ThemeStore {
     /// Changes the app icon on the home screen. iOS confirms the change with its own message.
     @MainActor
     func setIcon(_ id: String) {
-        guard Palette.all.contains(where: { $0.id == id }), id != iconID else { return }
+        guard AppIconOption.all.contains(where: { $0.id == id }), id != iconID else { return }
         let name: String? = id == Palette.all[0].id ? nil : "AppIcon-\(id)"
         guard UIApplication.shared.supportsAlternateIcons else { return }
         iconID = id
@@ -174,27 +194,31 @@ struct AuroraBackground: View {
         ZStack {
             (dark ? Color(red: 0.035, green: 0.035, blue: 0.07) : Color(red: 0.965, green: 0.96, blue: 0.985))
 
-            // Radial gradients instead of blurred shapes: the same soft look at a fraction of the cost.
-            GeometryReader { proxy in
-                let size = proxy.size
-                glow(Theme.primary.opacity(dark ? 0.42 : 0.26), diameter: size.width * 1.9)
-                    .scaleEffect(scale)
-                    .position(
-                        x: size.width * (0.10 + 0.14 * shift),
-                        y: size.width * (0.15 + 0.10 * shift)
-                    )
-                glow(Theme.tertiary.opacity(dark ? 0.26 : 0.20), diameter: size.width * 1.8)
-                    .scaleEffect(scale)
-                    .position(
-                        x: size.width * (0.95 - 0.16 * shift),
-                        y: size.height * (0.45 + 0.06 * shift)
-                    )
-                glow(Theme.tint.opacity(dark ? 0.30 : 0.18), diameter: size.width * 2.0)
-                    .scaleEffect(scale)
-                    .position(
-                        x: size.width * (0.25 + 0.18 * shift),
-                        y: size.height * (0.92 - 0.07 * shift)
-                    )
+            if MotionStore.shared.lightMode {
+                lightGlows(dark: dark, scale: scale)
+            } else {
+                // Full design: soft blurred glows that drift slowly.
+                GeometryReader { proxy in
+                    let size = proxy.size
+                    Circle()
+                        .fill(Theme.primary.opacity(dark ? 0.38 : 0.22))
+                        .frame(width: size.width * 0.9)
+                        .blur(radius: 110)
+                        .scaleEffect(scale)
+                        .offset(x: size.width * (-0.35 + 0.14 * shift), y: size.width * (-0.3 + 0.10 * shift))
+                    Circle()
+                        .fill(Theme.tertiary.opacity(dark ? 0.22 : 0.18))
+                        .frame(width: size.width * 0.8)
+                        .blur(radius: 120)
+                        .scaleEffect(scale)
+                        .offset(x: size.width * (0.5 - 0.16 * shift), y: size.height * (0.25 + 0.06 * shift))
+                    Circle()
+                        .fill(Theme.tint.opacity(dark ? 0.26 : 0.16))
+                        .frame(width: size.width * 0.9)
+                        .blur(radius: 130)
+                        .scaleEffect(scale)
+                        .offset(x: size.width * (-0.2 + 0.18 * shift), y: size.height * (0.72 - 0.07 * shift))
+                }
             }
         }
         .ignoresSafeArea()
@@ -216,6 +240,22 @@ struct AuroraBackground: View {
                 try? await Task.sleep(for: .seconds(0.3))
                 withAnimation(.spring(response: 0.9, dampingFraction: 0.6)) { flare = false }
             }
+        }
+    }
+
+    /// Light mode: the same colours as still radial gradients, cheap to draw.
+    private func lightGlows(dark: Bool, scale: CGFloat) -> some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            glow(Theme.primary.opacity(dark ? 0.42 : 0.26), diameter: size.width * 1.9)
+                    .scaleEffect(scale)
+                .position(x: size.width * 0.10, y: size.width * 0.15)
+                glow(Theme.tertiary.opacity(dark ? 0.26 : 0.20), diameter: size.width * 1.8)
+                    .scaleEffect(scale)
+                .position(x: size.width * 0.95, y: size.height * 0.45)
+            glow(Theme.tint.opacity(dark ? 0.30 : 0.18), diameter: size.width * 2.0)
+                .scaleEffect(scale)
+                .position(x: size.width * 0.25, y: size.height * 0.92)
         }
     }
 }
@@ -337,79 +377,6 @@ extension View {
     /// Glass in any shape, optionally tinted with a colour.
     func glass<S: Shape>(_ shape: S, tint: Color? = nil, interactive: Bool = false, blurred: Bool = false) -> some View {
         modifier(GlassBackground(shape: shape, tint: tint, interactive: interactive, blurred: blurred))
-    }
-}
-
-/// The glowing orb used as the app's mark. It floats and sways gently.
-struct OrbLogo: View {
-    var size: CGFloat = 64
-    @State private var pulse = false
-    @State private var float = false
-    @State private var sway = false
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [Theme.tint.opacity(0.6), Theme.tint.opacity(0)],
-                        center: .center,
-                        startRadius: size * 0.3,
-                        endRadius: size * 0.85
-                    )
-                )
-                .frame(width: size * 1.7, height: size * 1.7)
-                .opacity(pulse ? 1 : 0.55)
-                .scaleEffect(pulse ? 1.1 : 0.92)
-            Circle()
-                .fill(Theme.accent)
-                .overlay(
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [.white.opacity(0.55), .clear],
-                                center: UnitPoint(x: 0.3, y: 0.25),
-                                startRadius: 0,
-                                endRadius: size * 0.6
-                            )
-                        )
-                )
-                .shadow(color: Theme.tint.opacity(0.35), radius: size * 0.18, y: size * 0.08)
-            Image(systemName: "sparkles")
-                .font(.system(size: size * 0.42, weight: .semibold))
-                .foregroundStyle(.white)
-                .rotationEffect(.degrees(sway ? 8 : -8))
-                .scaleEffect(pulse ? 1.06 : 0.96)
-        }
-        .frame(width: size, height: size)
-        .rotationEffect(.degrees(sway ? 4 : -4))
-        .offset(y: float ? -5 : 5)
-        .onAppear {
-            if Motion.isRunning { startMotion() }
-        }
-        .onChange(of: Motion.isRunning) {
-            if Motion.isRunning {
-                startMotion()
-            } else {
-                withAnimation(.easeOut(duration: 0.8)) {
-                    pulse = false
-                    float = false
-                    sway = false
-                }
-            }
-        }
-    }
-
-    private func startMotion() {
-        withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) {
-            pulse = true
-        }
-        withAnimation(.easeInOut(duration: 3.2).repeatForever(autoreverses: true)) {
-            float = true
-        }
-        withAnimation(.easeInOut(duration: 4.6).repeatForever(autoreverses: true)) {
-            sway = true
-        }
     }
 }
 
