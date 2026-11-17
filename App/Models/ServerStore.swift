@@ -359,8 +359,10 @@ final class ServerStore {
                 throw ServerError.message("RunPod не принял ключ. Создайте новый ключ с правами Read/Write и вставьте его ещё раз.")
             }
             let text = String(data: data, encoding: .utf8) ?? ""
-            if text.localizedCaseInsensitiveContains("gpu") {
-                throw ServerError.message("На машине RunPod сейчас нет свободной видеокарты. Попробуйте позже или создайте сервер заново на том же диске.")
+            let detail = String(text.prefix(300))
+            if text.localizedCaseInsensitiveContains("not enough") || text.localizedCaseInsensitiveContains("no available")
+                || text.localizedCaseInsensitiveContains("free gpu") {
+                throw ServerError.message("На машине RunPod сейчас нет свободной видеокарты — её занял кто-то другой, пока сервер был выключен. Попробуйте через 10–60 минут.\n\nОтвет RunPod: \(detail)")
             }
             throw ServerError.message("RunPod ответил ошибкой \(code). \(text.prefix(200))")
         }
