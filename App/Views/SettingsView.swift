@@ -155,44 +155,17 @@ struct SettingsView: View {
 
                     // MARK: Данные
                     SettingsSection(header: "Данные") {
-                        Button {
+                        dangerButton("Удалить все чаты", icon: "trash.fill") {
                             confirmDeleteChats = true
-                        } label: {
-                            Label("Удалить все чаты", systemImage: "trash")
-                                .font(.body.weight(.semibold))
-                                .foregroundStyle(.red)
-                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .buttonStyle(PressableStyle(scale: 0.97))
-                        // Attached to the button so the menu opens right next to it.
-                        .confirmationDialog("Удалить все чаты без возможности восстановить?", isPresented: $confirmDeleteChats, titleVisibility: .visible) {
-                            Button("Удалить все", role: .destructive) { model.deleteAllChats() }
-                            Button("Отмена", role: .cancel) {}
-                        }
+                        SettingsNote("Удаляет все разговоры на этом iPhone. Модели и настройки останутся.")
 
                         if model.server.isConfigured {
                             Divider()
-                            Button {
+                            dangerButton("Очистить файлы на сервере", icon: "externaldrive.fill.badge.xmark", busy: clearingServer) {
                                 confirmClearServer = true
-                            } label: {
-                                HStack(spacing: 10) {
-                                    Label("Очистить файлы на сервере", systemImage: "externaldrive.badge.xmark")
-                                        .font(.body.weight(.semibold))
-                                        .foregroundStyle(.red)
-                                    Spacer()
-                                    if clearingServer { ProgressView() }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
-                            .buttonStyle(PressableStyle(scale: 0.97))
-                            .disabled(clearingServer)
-                            .confirmationDialog("Удалить все картинки, видео и музыку с сервера?", isPresented: $confirmClearServer, titleVisibility: .visible) {
-                                Button("Удалить всё", role: .destructive) { clearServer() }
-                                Button("Отмена", role: .cancel) {}
-                            } message: {
-                                Text("Работы пропадут и из Студии. Модели и чаты останутся.")
-                            }
-                            SettingsNote(clearServerNote ?? "Освобождает место на диске сервера. Если сервер выключен, он включится для этого.")
+                            SettingsNote(clearServerNote ?? "Удаляет все картинки, видео и музыку с диска сервера. Если сервер выключен, он включится для этого.")
                         }
                     }
                 }
@@ -206,6 +179,26 @@ struct SettingsView: View {
             .scrollDismissesKeyboard(.interactively)
             .dismissesKeyboardOnTap()
             .background(ScreenBackground())
+            .sheet(isPresented: $confirmDeleteChats) {
+                DangerConfirmSheet(
+                    icon: "trash.fill",
+                    title: "Удалить все чаты?",
+                    message: "Все разговоры на этом iPhone будут удалены без возможности восстановить. Модели и настройки останутся.",
+                    actionTitle: "Удалить все чаты"
+                ) {
+                    model.deleteAllChats()
+                }
+            }
+            .sheet(isPresented: $confirmClearServer) {
+                DangerConfirmSheet(
+                    icon: "externaldrive.fill.badge.xmark",
+                    title: "Очистить сервер?",
+                    message: "Все картинки, видео и музыка будут удалены с диска сервера и из Студии. Модели и чаты останутся.",
+                    actionTitle: "Удалить всё"
+                ) {
+                    clearServer()
+                }
+            }
             .tint(Theme.tint)
             .onAppear { appeared = true }
             .animation(.easeInOut(duration: 0.5), value: ThemeStore.shared.palette.id)
@@ -247,6 +240,27 @@ struct SettingsView: View {
                 Text("Разрешите уведомления для Pocket AI в настройках iPhone.")
             }
         }
+    }
+
+    /// A red button that clearly looks tappable.
+    private func dangerButton(_ title: String, icon: String, busy: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if busy {
+                    ProgressView().tint(.white)
+                } else {
+                    Image(systemName: icon)
+                }
+                Text(busy ? "Удаляю…" : title)
+            }
+            .font(.body.weight(.semibold))
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 13)
+            .accentButtonLabel(RoundedRectangle(cornerRadius: 16, style: .continuous), tint: .red)
+        }
+        .liquidButton(prominent: true, tint: .red, shape: .rounded(16))
+        .disabled(busy)
     }
 
     private func clearServer() {
@@ -545,5 +559,63 @@ private struct BackgroundPreview: View {
             dark ? Color(red: 0.035, green: 0.035, blue: 0.07) : Color(red: 0.965, green: 0.96, blue: 0.985)
             PatternBackground(style: style, dark: dark, animated: false)
         }
+    }
+}
+
+
+/// Full confirmation screen for actions that cannot be undone.
+private struct DangerConfirmSheet: View {
+    let icon: String
+    let title: String
+    let message: String
+    let actionTitle: String
+    let action: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Spacer(minLength: 8)
+            Image(systemName: icon)
+                .font(.system(size: 38, weight: .semibold))
+                .foregroundStyle(.red)
+                .frame(width: 88, height: 88)
+                .background(Color.red.opacity(0.15), in: Circle())
+            Text(title)
+                .font(.title2.weight(.bold))
+                .multilineTextAlignment(.center)
+            Text(message)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button {
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                action()
+                dismiss()
+            } label: {
+                Text(actionTitle)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .accentButtonLabel(RoundedRectangle(cornerRadius: 18, style: .continuous), tint: .red)
+            }
+            .liquidButton(prominent: true, tint: .red, shape: .rounded(18))
+            Button {
+                dismiss()
+            } label: {
+                Text("Отмена")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .plainButtonLabel(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+            .liquidButton(prominent: false, shape: .rounded(18))
+        }
+        .padding(.horizontal, 24)
+        .padding(.bottom, 12)
+        .presentationDetents([.medium])
+        .presentationDragIndicator(.visible)
     }
 }
