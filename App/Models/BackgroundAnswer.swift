@@ -31,6 +31,9 @@ final class BackgroundAnswer {
         #if compiler(>=6.2)
         guard #available(iOS 26.0, *) else { return }
         let prefix = Bundle.main.bundleIdentifier ?? "com.personal.pocketai"
+        // Registering an identifier that is not listed in Info.plist crashes the app, so check first.
+        let permitted = Bundle.main.object(forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers") as? [String] ?? []
+        guard permitted.contains("\(prefix).answer.*") else { return }
         let identifier = "\(prefix).answer.\(UUID().uuidString)"
         requestedID = identifier
 

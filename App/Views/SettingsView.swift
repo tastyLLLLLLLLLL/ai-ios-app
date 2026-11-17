@@ -149,7 +149,7 @@ struct SettingsView: View {
                             .foregroundStyle(.red)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 15)
-                            .glassCard(cornerRadius: 20, interactive: true)
+                            .glassCard(cornerRadius: 20)
                     }
                     .buttonStyle(PressableStyle(scale: 0.97))
                 }
@@ -357,7 +357,7 @@ struct SettingsView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
-                        .glass(Capsule(), tint: Theme.tint, interactive: true)
+                        .glass(Capsule(), tint: Theme.tint)
                 }
                 .buttonStyle(PressableStyle())
             }

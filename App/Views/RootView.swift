@@ -18,13 +18,9 @@ struct RootView: View {
             let progress = showChats ? max(0, 1 + drawerDrag / drawerWidth) : 0
 
             ZStack(alignment: .leading) {
+                // Only a cheap offset: scaling and masking the whole screen made the panel stutter.
                 mainScreen
-                    .scaleEffect(1 - 0.06 * progress, anchor: .trailing)
-                    .offset(x: drawerWidth * 0.18 * progress)
-                    .mask {
-                        RoundedRectangle(cornerRadius: 44 * progress, style: .continuous)
-                            .ignoresSafeArea()
-                    }
+                    .offset(x: drawerWidth * 0.12 * progress)
                     .allowsHitTesting(!showChats)
 
                 // Dimmed main screen; a tap or a swipe to the left closes the panel.
@@ -107,7 +103,6 @@ struct RootView: View {
             ChatView(showModels: $showModels)
                 .opacity(launched ? 1 : 0)
                 .scaleEffect(launched ? 1 : 0.96)
-                .background(AuroraBackground())
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
@@ -277,7 +272,7 @@ struct ChatDrawer: View {
                                 .padding(.top, sectionIndex == 0 ? 0 : 14)
                                 .padding(.leading, 6)
 
-                            ForEach(Array(section.chats.enumerated()), id: \.element.id) { index, chat in
+                            ForEach(section.chats) { chat in
                                 ChatRowCard(
                                     chat: chat,
                                     isCurrent: chat.id == model.currentID,
@@ -286,13 +281,6 @@ struct ChatDrawer: View {
                                         onClose()
                                     },
                                     onDelete: { chatToDelete = chat }
-                                )
-                                .opacity(appeared ? 1 : 0)
-                                .offset(x: appeared ? 0 : -24)
-                                .animation(
-                                    .spring(response: 0.45, dampingFraction: 0.82)
-                                        .delay(0.05 + Double(min(index + sectionIndex, 8)) * 0.035),
-                                    value: appeared
                                 )
                                 .transition(.asymmetric(
                                     insertion: .opacity,
@@ -303,6 +291,9 @@ struct ChatDrawer: View {
                     }
                     .padding(.horizontal, 14)
                     .padding(.bottom, 24)
+                    .opacity(appeared ? 1 : 0)
+                    .offset(x: appeared ? 0 : -16)
+                    .animation(.easeOut(duration: 0.25).delay(0.05), value: appeared)
                     .animation(.smooth, value: model.sortedConversations.map(\.id))
                 }
                 .scrollIndicators(.hidden)
@@ -348,7 +339,7 @@ struct ChatDrawer: View {
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 44, height: 44)
-                    .glass(Circle(), tint: Theme.tint, interactive: true)
+                    .glass(Circle(), tint: Theme.tint)
             }
             .buttonStyle(PressableStyle(scale: 0.88))
             .accessibilityLabel("Новый чат")
@@ -391,7 +382,7 @@ struct ChatDrawer: View {
     }
 }
 
-/// Background of the chat panel: glass on iOS 26, a tinted frosted panel before that.
+/// Background of the chat panel: an opaque tinted surface, cheap to draw while it slides.
 private struct DrawerBackground: View {
     @Environment(\.colorScheme) private var colorScheme
 
@@ -399,22 +390,22 @@ private struct DrawerBackground: View {
         let shape = UnevenRoundedRectangle(
             topLeadingRadius: 0,
             bottomLeadingRadius: 0,
-            bottomTrailingRadius: 36,
-            topTrailingRadius: 36,
+            bottomTrailingRadius: 32,
+            topTrailingRadius: 32,
             style: .continuous
         )
+        let base = colorScheme == .dark ? Color(red: 0.07, green: 0.07, blue: 0.11) : Color(red: 0.97, green: 0.97, blue: 0.99)
         ZStack {
-            shape.fill(.regularMaterial)
+            shape.fill(base)
             shape.fill(
                 LinearGradient(
-                    colors: [Theme.primary.opacity(colorScheme == .dark ? 0.22 : 0.12), .clear],
+                    colors: [Theme.primary.opacity(colorScheme == .dark ? 0.20 : 0.10), .clear],
                     startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+                    endPoint: .center
                 )
             )
             shape.stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
-        .shadow(color: .black.opacity(0.25), radius: 24, x: 8)
     }
 }
 
@@ -472,7 +463,10 @@ private struct ChatRowCard: View {
             .accessibilityLabel("Удалить чат")
         }
         .padding(12)
-        .glassCard(cornerRadius: 20, interactive: true)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color.primary.opacity(isCurrent ? 0.08 : 0.05))
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .strokeBorder(Theme.tint, lineWidth: 1.5)

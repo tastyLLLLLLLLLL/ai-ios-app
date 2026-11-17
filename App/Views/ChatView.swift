@@ -147,7 +147,7 @@ struct ChatView: View {
                     .font(.footnote.weight(.semibold))
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .glassCard(cornerRadius: 18, blurred: true, interactive: true)
+                    .glassCard(cornerRadius: 18, blurred: true)
             }
             .buttonStyle(PressableStyle())
         default:
@@ -219,7 +219,8 @@ struct InputBar: View {
                         .contentTransition(.symbolEffect(.replace))
                         .foregroundStyle(.white)
                         .frame(width: 36, height: 36)
-                        .glass(Circle(), tint: Theme.tint, interactive: true)
+                        .background(Theme.accent, in: Circle())
+                        .contentShape(Circle())
                         .opacity(sendEnabled ? 1 : 0.35)
                         .scaleEffect(sendEnabled ? 1 : 0.9)
                         .animation(.smooth, value: sendEnabled)
@@ -599,7 +600,7 @@ struct EmptyStateView: View {
                                     Spacer(minLength: 0)
                                 }
                                 .padding(14)
-                                .glassCard(cornerRadius: 18, interactive: true)
+                                .glassCard(cornerRadius: 18)
                             }
                             .buttonStyle(PressableStyle())
                             .opacity(appeared ? 1 : 0)

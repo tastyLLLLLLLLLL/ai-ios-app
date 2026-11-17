@@ -369,11 +369,13 @@ private struct ModelCardShell<Extra: View>: View {
                         .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .leading)))
                 } else {
                     Button(action: onSelect) {
-                        Text("Использовать")
-                            .font(.subheadline.weight(.semibold))
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .glass(Capsule(), interactive: true)
+                        Label("Использовать", systemImage: "checkmark.circle")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 10)
+                            .background(Theme.accent, in: Capsule())
+                            .shadow(color: Theme.tint.opacity(0.35), radius: 8, y: 3)
                     }
                     .buttonStyle(PressableStyle())
                     .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .leading)))
@@ -395,7 +397,7 @@ private struct ModelCardShell<Extra: View>: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 9)
-                    .glass(Capsule(), tint: Theme.tint, interactive: true)
+                    .glass(Capsule(), tint: Theme.tint)
             }
             .buttonStyle(PressableStyle())
             .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .leading)))
@@ -462,7 +464,7 @@ private struct UncensoredRow: View {
                         .font(.footnote.weight(.semibold))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 7)
-                        .glass(Capsule(), interactive: true)
+                        .glass(Capsule())
                 }
                 .buttonStyle(PressableStyle())
                 Spacer(minLength: 0)
