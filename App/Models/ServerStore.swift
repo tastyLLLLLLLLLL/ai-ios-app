@@ -144,6 +144,8 @@ final class ServerStore {
     private(set) var jobs: [ServerJob] = []
     private(set) var selectedTextModelID: String?
     private(set) var power: Power = .unknown
+    /// What the app is doing with the server right now, shown while it starts.
+    private(set) var powerNote: String?
     /// Minutes without use after which the server switches itself off (0 = never).
     private(set) var idleMinutes = 10
     /// RunPod account key, needed only to switch a stopped server on. Kept in the keychain.
@@ -299,9 +301,20 @@ final class ServerStore {
             throw ServerError.message("Чтобы включать сервер из приложения, добавьте ключ RunPod в разделе «Онлайн».")
         }
         power = .starting
+        powerNote = "Включаю сервер…"
+        defer { powerNote = nil }
         do {
-            try await runPodAction("start")
-            try await waitUntilReachable(seconds: 360)
+            do {
+                try await runPodAction("start")
+                // The start can be accepted and still fail when the machine's GPU is taken.
+                if try await waitForStatus(timeout: 180) == false {
+                    try await recreatePod()
+                }
+            } catch RunPodFailure.gpuUnavailable {
+                try await recreatePod()
+            }
+            powerNote = "Сервер запускается, загружаю программы…"
+            try await waitUntilReachable(seconds: 600)
             power = .unknown
             await refresh()
         } catch {
@@ -333,39 +346,126 @@ final class ServerStore {
             if await isReachable() { return }
             try await Task.sleep(for: .seconds(5))
         }
-        throw ServerError.message("Сервер включился, но не ответил за 6 минут. Проверьте на RunPod, что он запущен, и что в команде запуска стоит autostart.sh.")
+        throw ServerError.message("Сервер включился, но не ответил за 10 минут. Проверьте на RunPod, что он запущен и что в команде запуска стоит bash /workspace/ai-server/autostart.sh.")
     }
 
-    /// Start or stop through the RunPod API (v2, with a fallback to the older v1).
-    private func runPodAction(_ action: String) async throws {
-        guard let pod = podID, let key = Keychain.read(account: "runpod") else { throw ServerError.notConfigured }
-        var request = URLRequest(url: URL(string: "https://api.runpod.io/v2/pods/\(pod)/action")!, timeoutInterval: 30)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["action": action])
+    private enum RunPodFailure: Error {
+        case gpuUnavailable
+    }
 
-        var (data, response) = try await URLSession.shared.data(for: request)
-        var code = (response as? HTTPURLResponse)?.statusCode ?? 0
-        if code == 404 || code == 405 {
-            var old = URLRequest(url: URL(string: "https://rest.runpod.io/v1/pods/\(pod)/\(action)")!, timeoutInterval: 30)
-            old.httpMethod = "POST"
-            old.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-            (data, response) = try await URLSession.shared.data(for: old)
-            code = (response as? HTTPURLResponse)?.statusCode ?? 0
+    /// Calls the RunPod API with the saved key and returns the status code and body.
+    private func runPod(_ method: String, _ path: String, body: [String: Any]? = nil) async throws -> (Int, Data) {
+        guard let key = Keychain.read(account: "runpod") else { throw ServerError.notConfigured }
+        var request = URLRequest(url: URL(string: "https://api.runpod.io/v2" + path)!, timeoutInterval: 45)
+        request.httpMethod = method
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if code == 401 || code == 403 {
+            throw ServerError.message("RunPod не принял ключ. Создайте новый ключ с правами Read/Write и вставьте его ещё раз.")
+        }
+        return (code, data)
+    }
+
+    private static func mentionsNoGPU(_ text: String) -> Bool {
+        ["not enough", "no available", "no instances", "free gpu", "no longer available", "insufficient"]
+            .contains { text.localizedCaseInsensitiveContains($0) }
+    }
+
+    /// Start or stop through the RunPod API.
+    private func runPodAction(_ action: String) async throws {
+        guard let pod = podID else { throw ServerError.notConfigured }
+        let (code, data) = try await runPod("POST", "/pods/\(pod)/action", body: ["action": action])
         guard (200..<300).contains(code) else {
-            if code == 401 || code == 403 {
-                throw ServerError.message("RunPod не принял ключ. Создайте новый ключ с правами Read/Write и вставьте его ещё раз.")
-            }
             let text = String(data: data, encoding: .utf8) ?? ""
-            let detail = String(text.prefix(300))
-            if text.localizedCaseInsensitiveContains("not enough") || text.localizedCaseInsensitiveContains("no available")
-                || text.localizedCaseInsensitiveContains("free gpu") {
-                throw ServerError.message("На машине RunPod сейчас нет свободной видеокарты — её занял кто-то другой, пока сервер был выключен. Попробуйте через 10–60 минут.\n\nОтвет RunPod: \(detail)")
+            if action == "start", Self.mentionsNoGPU(text) || code == 409 || code == 422 {
+                throw RunPodFailure.gpuUnavailable
             }
             throw ServerError.message("RunPod ответил ошибкой \(code). \(text.prefix(200))")
         }
+    }
+
+    /// Waits until RunPod reports the pod as running. Returns false if it stopped or failed instead.
+    private func waitForStatus(timeout: Int) async throws -> Bool {
+        guard let pod = podID else { return false }
+        let deadline = Date().addingTimeInterval(TimeInterval(timeout))
+        while Date() < deadline {
+            try Task.checkCancellation()
+            if let (code, data) = try? await runPod("GET", "/pods/\(pod)"), code == 200,
+               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let status = (object["status"] as? String)?.uppercased() {
+                if status == "RUNNING" { return true }
+                if status == "ERROR" || status == "TERMINATED" { return false }
+            }
+            try await Task.sleep(for: .seconds(8))
+        }
+        return false
+    }
+
+    /// The machine's GPU is taken: creates a new pod with the same settings on the same network
+    /// volume (all models stay), removes the old one and switches the app to the new address.
+    private func recreatePod() async throws {
+        guard let oldID = podID else { throw ServerError.notConfigured }
+        powerNote = "Видеокарта на старой машине занята — создаю новый сервер на вашем диске…"
+
+        let (code, data) = try await runPod("GET", "/pods/\(oldID)")
+        guard code == 200, let old = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ServerError.message("Не удалось прочитать настройки сервера на RunPod (код \(code)).")
+        }
+        let mounts = old["mounts"] as? [String: Any]
+        guard let network = (mounts?["network"] as? [[String: Any]])?.first,
+              let volumeID = network["volumeId"] as? String else {
+            throw ServerError.message("На машине RunPod нет свободной видеокарты, а сервер не на сетевом диске, поэтому пересоздать его автоматически нельзя. Попробуйте позже или перенесите сервер на Network Volume.")
+        }
+        let path = network["path"] as? String ?? "/workspace"
+        let image = old["image"] as? String ?? "runpod/pytorch:2.1.0-cu1320-torch280-ubuntu2404"
+        let disk = old["disk"] as? Int ?? 50
+        var ports = old["ports"] as? [String] ?? []
+        for port in ["8080/http", "22/tcp"] where !ports.contains(port) { ports.append(port) }
+        let oldGPU = (old["gpu"] as? [String: Any])?["id"] as? String
+        let dataCenter = old["dataCenterId"] as? String
+        let env = old["env"] as? [String: Any] ?? [:]
+
+        // The old card first, then other cards that fit the models, cheapest first.
+        var candidates = [oldGPU].compactMap { $0 }
+        for gpu in ["NVIDIA A40", "NVIDIA RTX A6000", "NVIDIA L40S", "NVIDIA RTX PRO 4500 Blackwell",
+                    "NVIDIA RTX 6000 Ada Generation", "NVIDIA L40", "NVIDIA GeForce RTX 5090"]
+            where !candidates.contains(gpu) {
+            candidates.append(gpu)
+        }
+
+        var lastError = ""
+        for gpu in candidates {
+            var body: [String: Any] = [
+                "name": old["name"] as? String ?? "ai-server",
+                "image": image,
+                "gpu": ["id": gpu, "count": 1],
+                "disk": disk,
+                "mounts": ["network": [["volumeId": volumeID, "path": path]]],
+                "ports": ports,
+                "args": "bash /workspace/ai-server/autostart.sh",
+                "cloud": "SECURE",
+                "env": env
+            ]
+            if let dataCenter { body["dataCenterIds"] = [dataCenter] }
+            let (createCode, created) = try await runPod("POST", "/pods", body: body)
+            guard (200..<300).contains(createCode),
+                  let pod = try? JSONSerialization.jsonObject(with: created) as? [String: Any],
+                  let newID = pod["id"] as? String else {
+                lastError = String((String(data: created, encoding: .utf8) ?? "").prefix(200))
+                continue
+            }
+            _ = try? await runPod("DELETE", "/pods/\(oldID)")
+            address = "https://\(newID)-8080.proxy.runpod.net"
+            UserDefaults.standard.set(address, forKey: Self.addressKey)
+            powerNote = "Новый сервер создан. Он запускается — первый раз это до 5–10 минут…"
+            return
+        }
+        throw ServerError.message("Сейчас в дата-центре вашего диска нет свободных подходящих видеокарт. Попробуйте через 10–30 минут.\n\nОтвет RunPod: \(lastError)")
     }
 
     func selectTextModel(_ id: String) {

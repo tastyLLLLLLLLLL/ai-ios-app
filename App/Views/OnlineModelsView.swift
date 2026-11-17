@@ -263,7 +263,7 @@ struct OnlineModelsView: View {
         case .starting:
             HStack(spacing: 10) {
                 ProgressView()
-                Text("Включаю сервер… обычно 1–3 минуты").font(.subheadline)
+                Text(server.powerNote ?? "Включаю сервер… обычно 1–3 минуты").font(.subheadline)
             }
         case .stopping:
             HStack(spacing: 10) {

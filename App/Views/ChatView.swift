@@ -116,8 +116,9 @@ struct ChatView: View {
         if model.server.power == .starting {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text("Включаю сервер… обычно 1–3 минуты")
+                Text(model.server.powerNote ?? "Включаю сервер… обычно 1–3 минуты")
                     .font(.footnote.weight(.medium))
+                    .multilineTextAlignment(.leading)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
