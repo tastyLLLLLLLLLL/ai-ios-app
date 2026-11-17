@@ -56,6 +56,21 @@ struct SettingsView: View {
                     }
 
                     SettingsSection(
+                        footer: BackgroundAnswer.isSupported
+                            ? "Эксперимент. Если свернуть приложение во время ответа, модель перезагрузится на процессор и продолжит писать — медленнее, зато в фоне. Прогресс виден на экране блокировки, по окончании придёт уведомление. iOS может остановить работу в фоне в любой момент — тогда ответ встанет на паузу и допишется, когда вы вернётесь."
+                            : "Работа в фоне доступна начиная с iOS 26."
+                    ) {
+                        Toggle(isOn: $model.settings.backgroundAnswers) {
+                            SettingsLabel(
+                                title: "Дописывать в фоне",
+                                icon: "moon.stars.fill",
+                                bounce: model.settings.backgroundAnswers
+                            )
+                        }
+                        .disabled(!BackgroundAnswer.isSupported)
+                    }
+
+                    SettingsSection(
                         footer: "Модель сначала обдумывает задачу, потом отвечает. Ответы точнее, но приходят медленнее. Работает с моделями Qwen3."
                     ) {
                         Toggle(isOn: $model.settings.thinkingEnabled) {

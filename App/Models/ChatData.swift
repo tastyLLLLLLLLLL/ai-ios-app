@@ -97,6 +97,8 @@ struct AppSettings: Codable, Equatable {
     /// Freeze the moving background while the model is answering.
     var pauseMotionWhileAnswering = true
     var notificationsEnabled = false
+    /// Experimental: keep writing on the processor after the app is minimised (iOS 26).
+    var backgroundAnswers = false
 
     init() {}
 
@@ -111,6 +113,7 @@ struct AppSettings: Codable, Equatable {
         uncensored = try values.decodeIfPresent(Bool.self, forKey: .uncensored) ?? false
         pauseMotionWhileAnswering = try values.decodeIfPresent(Bool.self, forKey: .pauseMotionWhileAnswering) ?? true
         notificationsEnabled = try values.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? false
+        backgroundAnswers = try values.decodeIfPresent(Bool.self, forKey: .backgroundAnswers) ?? false
     }
 
     static func load() -> AppSettings {

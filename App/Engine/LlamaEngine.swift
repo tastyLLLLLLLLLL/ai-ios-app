@@ -64,8 +64,11 @@ final class LlamaEngine: @unchecked Sendable {
 
     // MARK: - Public API
 
-    func load(path: String, visionPath: String?, contextSize: Int) async throws -> LoadedInfo {
-        try await run { try self.loadSync(path: path, visionPath: visionPath, contextSize: contextSize) }
+    /// - Parameter useGPU: false loads the model for the processor only, which iOS allows in the background.
+    func load(path: String, visionPath: String?, contextSize: Int, useGPU: Bool = true) async throws -> LoadedInfo {
+        try await run {
+            try self.loadSync(path: path, visionPath: visionPath, contextSize: contextSize, useGPU: useGPU)
+        }
     }
 
     func unload() async {
@@ -155,18 +158,26 @@ final class LlamaEngine: @unchecked Sendable {
         contextSize = 0
     }
 
-    private func loadSync(path: String, visionPath: String?, contextSize: Int) throws -> LoadedInfo {
+    private func loadSync(path: String, visionPath: String?, contextSize: Int, useGPU requestedGPU: Bool) throws -> LoadedInfo {
         _ = Self.backend
         unloadSync()
 
-        var modelParams = llama_model_default_params()
         #if targetEnvironment(simulator)
-        modelParams.n_gpu_layers = 0
+        let useGPU = false
         #else
-        modelParams.n_gpu_layers = 99
+        let useGPU = requestedGPU
         #endif
 
-        guard let loadedModel = llama_model_load_from_file(path, modelParams) else {
+        var modelParams = llama_model_default_params()
+        modelParams.n_gpu_layers = useGPU ? 99 : 0
+
+        // An empty device list keeps every computation on the processor.
+        var noDevices: [ggml_backend_dev_t?] = [nil]
+        let loaded: OpaquePointer? = noDevices.withUnsafeMutableBufferPointer { buffer in
+            if !useGPU { modelParams.devices = buffer.baseAddress }
+            return llama_model_load_from_file(path, modelParams)
+        }
+        guard let loadedModel = loaded else {
             throw EngineError.loadFailed
         }
 
@@ -176,10 +187,14 @@ final class LlamaEngine: @unchecked Sendable {
         #if targetEnvironment(simulator)
         // The simulator computes on the CPU; using more threads than cores makes it crawl.
         let threads = Int32(max(1, min(4, ProcessInfo.processInfo.activeProcessorCount - 1)))
-        contextParams.offload_kqv = false
         #else
-        let threads: Int32 = 4
+        // On the processor, the performance cores do the work.
+        let threads: Int32 = useGPU ? 4 : Int32(max(2, min(6, ProcessInfo.processInfo.activeProcessorCount - 2)))
         #endif
+        if !useGPU {
+            contextParams.offload_kqv = false
+            contextParams.op_offload = false
+        }
         contextParams.n_threads = threads
         contextParams.n_threads_batch = threads
 
@@ -200,11 +215,7 @@ final class LlamaEngine: @unchecked Sendable {
 
         if let visionPath {
             var visionParams = mtmd_context_params_default()
-            #if targetEnvironment(simulator)
-            visionParams.use_gpu = false
-            #else
-            visionParams.use_gpu = true
-            #endif
+            visionParams.use_gpu = useGPU
             visionParams.print_timings = false
             visionParams.n_threads = threads
             visionParams.warmup = false

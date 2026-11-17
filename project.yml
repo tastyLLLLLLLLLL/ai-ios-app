@@ -27,6 +27,10 @@ targets:
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         ITSAppUsesNonExemptEncryption: false
+        BGTaskSchedulerPermittedIdentifiers:
+          - $(PRODUCT_BUNDLE_IDENTIFIER).answer.*
+        UIBackgroundModes:
+          - processing
         NSCameraUsageDescription: Камера нужна, чтобы сфотографировать и прикрепить снимок к сообщению.
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait

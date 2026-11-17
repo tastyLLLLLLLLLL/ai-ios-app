@@ -25,6 +25,12 @@ final class AppModel {
     private let engine = LlamaEngine()
     private var loadedFile: String?
     private var loadedContextSize = 0
+    /// False after the model was reloaded for the processor to keep working in the background.
+    private var loadedOnGPU = true
+    /// Set while an answer is moved from the graphics chip to the processor.
+    private var switchingProcessor = false
+    /// Tokens written for the current answer, across pauses; drives the lock-screen progress.
+    private var answerTokens = 0
     private var template = ChatTemplate.chatML
     private var supportsThinking = false
     private var loadedVisionPath: String?
@@ -44,6 +50,9 @@ final class AppModel {
     init() {
         models.onDownloadFinished = { [weak self] fileName, error in
             self?.notifyDownload(fileName: fileName, error: error)
+        }
+        BackgroundAnswer.shared.onExpire = { [weak self] in
+            self?.backgroundTimeExpired()
         }
         if let data = try? Data(contentsOf: Self.storageURL),
            let saved = try? JSONDecoder().decode([Conversation].self, from: data) {
@@ -160,15 +169,42 @@ final class AppModel {
     /// and continued when the user comes back.
     func handleBackground() {
         guard isGenerating, let id = generatingConversationID else { return }
+        if BackgroundAnswer.shared.isRunning {
+            continueOnProcessor(id)
+        } else {
+            pause(id, reason: "iPhone не даёт нейросети работать в фоне. Откройте приложение — ответ допишется сам.")
+        }
+    }
+
+    private func pause(_ id: UUID, reason: String) {
         stop()
         pausedConversationID = id
         if settings.notificationsEnabled {
-            NotificationService.shared.post(
-                id: Self.pausedNotificationID,
-                title: "Ответ на паузе",
-                body: "iPhone не даёт нейросети работать в фоне. Откройте приложение — ответ допишется сам."
-            )
+            NotificationService.shared.post(id: Self.pausedNotificationID, title: "Ответ на паузе", body: reason)
         }
+    }
+
+    /// The graphics chip is off limits in the background, so the model is reloaded for the processor
+    /// and the answer continues from where it stopped (slower, but without opening the app).
+    private func continueOnProcessor(_ id: UUID) {
+        switchingProcessor = true
+        let previous = generationTask
+        generationTask?.cancel()
+        engine.cancelAll()
+        Task {
+            await previous?.value
+            switchingProcessor = false
+            guard BackgroundAnswer.shared.isRunning else {
+                pause(id, reason: "iOS не дал времени на работу в фоне. Откройте приложение — ответ допишется сам.")
+                return
+            }
+            generate(in: id, resume: true, onProcessor: true)
+        }
+    }
+
+    private func backgroundTimeExpired() {
+        guard isGenerating, let id = generatingConversationID else { return }
+        pause(id, reason: "iOS остановил работу в фоне. Откройте приложение — ответ допишется сам.")
     }
 
     func handleForeground() {
@@ -198,7 +234,19 @@ final class AppModel {
     // MARK: - Generation
 
     /// - Parameter resume: continue the unfinished last answer instead of starting it over.
-    private func generate(in conversationID: UUID, resume: Bool = false) {
+    /// - Parameter onProcessor: load the model for the processor, which iOS allows in the background.
+    private func generate(in conversationID: UUID, resume: Bool = false, onProcessor: Bool = false) {
+        if !resume {
+            answerTokens = 0
+            if settings.backgroundAnswers, BackgroundAnswer.isSupported {
+                let title = conversations.first(where: { $0.id == conversationID })?.displayTitle ?? "Новый чат"
+                BackgroundAnswer.shared.begin(
+                    title: "Pocket AI пишет ответ",
+                    subtitle: title,
+                    totalUnits: settings.maxResponseTokens
+                )
+            }
+        }
         isGenerating = true
         generatingConversationID = conversationID
         MotionStore.shared.paused = settings.pauseMotionWhileAnswering
@@ -207,7 +255,7 @@ final class AppModel {
         generationTask = Task {
             let started = Date()
             do {
-                try await ensureModelLoaded()
+                try await ensureModelLoaded(useGPU: !onProcessor)
                 let (builtPrompt, images, prefill) = try await buildPrompt(for: conversationID)
                 var prompt = builtPrompt
                 if resume {
@@ -226,12 +274,14 @@ final class AppModel {
                 var lastFlush = Date.distantPast
                 for try await piece in engine.generate(prompt: prompt, images: images, options: options) {
                     pieces += 1
+                    answerTokens += 1
                     pending += piece
                     if Date().timeIntervalSince(lastFlush) >= 0.06 {
                         let chunk = pending
                         pending = ""
                         lastFlush = Date()
                         updateLastMessage(in: conversationID) { $0.text += chunk }
+                        BackgroundAnswer.shared.report(completedUnits: answerTokens)
                     }
                 }
                 if !pending.isEmpty {
@@ -254,9 +304,12 @@ final class AppModel {
             }
             isGenerating = false
             generatingConversationID = nil
+            save()
+            // While switching to the processor the answer is not over yet.
+            guard !switchingProcessor else { return }
             MotionStore.shared.paused = false
             UIApplication.shared.isIdleTimerDisabled = false
-            save()
+            BackgroundAnswer.shared.finish(success: true)
             finishNotice(for: conversationID, startedAt: started)
         }
     }
@@ -282,10 +335,10 @@ final class AppModel {
         change(&conversations[index].messages[last])
     }
 
-    private func ensureModelLoaded() async throws {
+    private func ensureModelLoaded(useGPU: Bool = true) async throws {
         guard let file = models.activeFile(uncensored: settings.uncensored) else { throw EngineError.notLoaded }
         let visionPath = models.visionPath
-        if loadedFile == file, loadedVisionPath == visionPath,
+        if loadedFile == file, loadedVisionPath == visionPath, loadedOnGPU == useGPU,
            loadedContextSize == settings.contextSize, engineState == .ready {
             return
         }
@@ -297,8 +350,10 @@ final class AppModel {
             let info = try await engine.load(
                 path: models.path(for: file),
                 visionPath: visionPath,
-                contextSize: requestedContext
+                contextSize: requestedContext,
+                useGPU: useGPU
             )
+            loadedOnGPU = useGPU
             template = ChatTemplate.detect(from: info.chatTemplate)
             supportsThinking = ChatTemplate.supportsThinking(info.chatTemplate)
             canSeeImages = info.canSeeImages
