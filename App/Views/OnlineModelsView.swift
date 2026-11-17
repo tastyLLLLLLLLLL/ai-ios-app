@@ -90,9 +90,9 @@ struct OnlineModelsView: View {
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
-                .background(Theme.accent, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .accentButtonLabel(RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
-            .buttonStyle(PressableStyle())
+            .liquidButton(prominent: true, shape: .rounded(16))
             .disabled(connecting || address.isEmpty || password.isEmpty)
             .opacity(address.isEmpty || password.isEmpty ? 0.5 : 1)
         }
@@ -148,9 +148,9 @@ struct OnlineModelsView: View {
                         .font(.subheadline.weight(.semibold))
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
-                        .glass(Capsule())
+                        .plainButtonLabel(Capsule())
                 }
-                .buttonStyle(PressableStyle())
+                .liquidButton(prominent: false, shape: .capsule)
 
                 Button(role: .destructive) {
                     if model.useOnline { model.chooseOfflineIfPossible() }
@@ -161,9 +161,9 @@ struct OnlineModelsView: View {
                         .foregroundStyle(.red)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
-                        .glass(Capsule())
+                        .plainButtonLabel(Capsule())
                 }
-                .buttonStyle(PressableStyle())
+                .liquidButton(prominent: false, shape: .capsule)
             }
 
 
@@ -304,9 +304,9 @@ struct OnlineModelsView: View {
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 13)
-                .background(tint, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .accentButtonLabel(RoundedRectangle(cornerRadius: 16, style: .continuous), tint: tint)
         }
-        .buttonStyle(PressableStyle())
+        .liquidButton(prominent: true, tint: tint, shape: .rounded(16))
         .disabled(powerBusy)
     }
 
@@ -367,9 +367,9 @@ struct OnlineModelsView: View {
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 13)
-                    .background(Theme.accent, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .accentButtonLabel(RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
-            .buttonStyle(PressableStyle())
+            .liquidButton(prominent: true, shape: .rounded(16))
             .disabled(server.mediaModels.isEmpty)
             .opacity(server.mediaModels.isEmpty ? 0.5 : 1)
         }
@@ -472,10 +472,10 @@ private struct OnlineModelCard: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 18)
                         .padding(.vertical, 10)
-                        .background(Theme.accent, in: Capsule())
-                        .shadow(color: Theme.tint.opacity(0.35), radius: 8, y: 3)
+                        .accentButtonLabel(Capsule())
+                        .shadow(color: GlassSupport.active ? .clear : Theme.tint.opacity(0.35), radius: 8, y: 3)
                 }
-                .buttonStyle(PressableStyle())
+                .liquidButton(prominent: true, shape: .capsule)
             }
         }
         .padding(16)

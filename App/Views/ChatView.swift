@@ -266,13 +266,13 @@ struct InputBar: View {
                         .contentTransition(.symbolEffect(.replace))
                         .foregroundStyle(.white)
                         .frame(width: 36, height: 36)
-                        .background(Theme.accent, in: Circle())
+                        .accentButtonLabel(Circle())
                         .contentShape(Circle())
                         .opacity(sendEnabled ? 1 : 0.35)
                         .scaleEffect(sendEnabled ? 1 : 0.9)
                         .animation(.smooth, value: sendEnabled)
                 }
-                .buttonStyle(PressableStyle(scale: 0.88))
+                .liquidButton(prominent: true, shape: .circle, pressScale: 0.88)
                 .disabled(!sendEnabled)
                 .padding(.trailing, 6)
                 .padding(.bottom, 5)
@@ -738,9 +738,9 @@ struct EmptyStateView: View {
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
-                    .background(Theme.accent, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .accentButtonLabel(RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
-            .buttonStyle(PressableStyle())
+            .liquidButton(prominent: true, shape: .rounded(16))
         }
         .padding(18)
         .glassCard()

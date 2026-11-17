@@ -404,9 +404,9 @@ struct SettingsView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
-                        .glass(Capsule(), tint: Theme.tint)
+                        .accentButtonLabel(Capsule())
                 }
-                .buttonStyle(PressableStyle())
+                .liquidButton(prominent: true, shape: .capsule)
             }
 
         case .unavailable:

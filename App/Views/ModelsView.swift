@@ -382,10 +382,10 @@ private struct ModelCardShell<Extra: View>: View {
                             .foregroundStyle(.white)
                             .padding(.horizontal, 18)
                             .padding(.vertical, 10)
-                            .background(Theme.accent, in: Capsule())
-                            .shadow(color: Theme.tint.opacity(0.35), radius: 8, y: 3)
+                            .accentButtonLabel(Capsule())
+                            .shadow(color: GlassSupport.active ? .clear : Theme.tint.opacity(0.35), radius: 8, y: 3)
                     }
-                    .buttonStyle(PressableStyle())
+                    .liquidButton(prominent: true, shape: .capsule)
                     .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .leading)))
                 }
                 Spacer()
@@ -405,9 +405,9 @@ private struct ModelCardShell<Extra: View>: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 9)
-                    .glass(Capsule(), tint: Theme.tint)
+                    .accentButtonLabel(Capsule())
             }
-            .buttonStyle(PressableStyle())
+            .liquidButton(prominent: true, shape: .capsule)
             .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .leading)))
         }
     }
@@ -472,9 +472,9 @@ private struct UncensoredRow: View {
                         .font(.footnote.weight(.semibold))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 7)
-                        .glass(Capsule())
+                        .plainButtonLabel(Capsule())
                 }
-                .buttonStyle(PressableStyle())
+                .liquidButton(prominent: false, shape: .capsule)
                 Spacer(minLength: 0)
 
             case .unavailable:

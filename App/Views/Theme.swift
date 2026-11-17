@@ -396,6 +396,86 @@ enum GlassSupport {
         #endif
         return false
     }
+
+    /// Liquid glass is in use: iOS 26 and the light mode is off.
+    static var active: Bool { isAvailable && !MotionStore.shared.lightMode }
+}
+
+enum LiquidShape {
+    case capsule
+    case circle
+    case rounded(CGFloat)
+}
+
+/// Buttons: the system liquid glass button styles on iOS 26 (they shimmer on touch and never
+/// swallow taps); a hand-drawn background with a press effect elsewhere and in light mode.
+private struct LiquidButton: ViewModifier {
+    let prominent: Bool
+    let tint: Color?
+    let shape: LiquidShape
+    let pressScale: CGFloat
+
+    func body(content: Content) -> some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *), GlassSupport.active {
+            styled(content)
+                .tint(tint ?? Theme.tint)
+                .buttonBorderShape(borderShape)
+        } else {
+            content.buttonStyle(PressableStyle(scale: pressScale))
+        }
+        #else
+        content.buttonStyle(PressableStyle(scale: pressScale))
+        #endif
+    }
+
+    #if compiler(>=6.2)
+    @available(iOS 26.0, *)
+    @ViewBuilder
+    private func styled(_ content: Content) -> some View {
+        if prominent {
+            content.buttonStyle(.glassProminent)
+        } else {
+            content.buttonStyle(.glass)
+        }
+    }
+    #endif
+
+    private var borderShape: ButtonBorderShape {
+        switch shape {
+        case .capsule: return .capsule
+        case .circle: return .circle
+        case .rounded(let radius): return .roundedRectangle(radius: radius)
+        }
+    }
+}
+
+extension View {
+    func liquidButton(prominent: Bool = false, tint: Color? = nil, shape: LiquidShape = .capsule, pressScale: CGFloat = 0.96) -> some View {
+        modifier(LiquidButton(prominent: prominent, tint: tint, shape: shape, pressScale: pressScale))
+    }
+
+    /// Coloured background of a main button's label; the glass button style draws it on iOS 26.
+    @ViewBuilder
+    func accentButtonLabel<S: Shape>(_ shape: S, tint: Color? = nil) -> some View {
+        if GlassSupport.active {
+            self
+        } else if let tint {
+            self.background(shape.fill(tint))
+        } else {
+            self.background(shape.fill(Theme.accent))
+        }
+    }
+
+    /// Neutral background of a secondary button's label; the glass button style draws it on iOS 26.
+    @ViewBuilder
+    func plainButtonLabel<S: Shape>(_ shape: S) -> some View {
+        if GlassSupport.active {
+            self
+        } else {
+            self.glass(shape)
+        }
+    }
 }
 
 extension View {

@@ -146,10 +146,10 @@ struct StudioView: View {
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 15)
-                .background(Theme.accent, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .shadow(color: Theme.tint.opacity(0.35), radius: 10, y: 4)
+                .accentButtonLabel(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .shadow(color: GlassSupport.active ? .clear : Theme.tint.opacity(0.35), radius: 10, y: 4)
             }
-            .buttonStyle(PressableStyle())
+            .liquidButton(prominent: true, shape: .rounded(18))
             .disabled(sending || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .opacity(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.5 : 1)
 
@@ -385,9 +385,9 @@ private struct JobCard: View {
                             .foregroundStyle(.white)
                             .padding(.horizontal, 22)
                             .padding(.vertical, 12)
-                            .background(Theme.accent, in: Capsule())
+                            .accentButtonLabel(Capsule())
                     }
-                    .buttonStyle(PressableStyle())
+                    .liquidButton(prominent: true, shape: .capsule)
                 }
 
                 ShareLink(item: fileURL) {
@@ -395,8 +395,9 @@ private struct JobCard: View {
                         .font(.subheadline.weight(.semibold))
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
-                        .glass(Capsule())
+                        .plainButtonLabel(Capsule())
                 }
+                .liquidButton(prominent: false, shape: .capsule)
             }
         } else {
             HStack(spacing: 8) {

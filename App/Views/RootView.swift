@@ -374,9 +374,9 @@ struct ChatDrawer: View {
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 44, height: 44)
-                    .glass(Circle(), tint: Theme.tint)
+                    .accentButtonLabel(Circle())
             }
-            .buttonStyle(PressableStyle(scale: 0.88))
+            .liquidButton(prominent: true, shape: .circle, pressScale: 0.88)
             .accessibilityLabel("Новый чат")
         }
         .opacity(appeared ? 1 : 0)
