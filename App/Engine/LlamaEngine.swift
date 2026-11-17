@@ -208,6 +208,8 @@ final class LlamaEngine: @unchecked Sendable {
             visionParams.print_timings = false
             visionParams.n_threads = threads
             visionParams.warmup = false
+            // Keeps large photos from filling the whole context on models with flexible image size.
+            visionParams.image_max_tokens = 768
             vision = mtmd_init_from_file(visionPath, loadedModel, visionParams)
         }
         let canSeeImages = vision.map { mtmd_support_vision($0) } ?? false

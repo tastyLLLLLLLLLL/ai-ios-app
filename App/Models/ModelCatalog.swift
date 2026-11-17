@@ -36,6 +36,18 @@ enum ModelCatalog {
             )
         ),
         CatalogModel(
+            name: "Qwen3-VL 4B",
+            summary: "Версия Qwen, которая видит фотографии: можно прикрепить снимок и спросить о нём. Хорошо читает текст на фото.",
+            sizeLabel: "≈ 3,3 ГБ",
+            badge: "Видит фото",
+            fileName: "Qwen3-VL-4B-Instruct-Q4_K_M.gguf",
+            url: URL(string: "https://huggingface.co/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/main/Qwen3-VL-4B-Instruct-Q4_K_M.gguf")!,
+            vision: CompanionFile(
+                fileName: "mmproj-Qwen3-VL-4B-Instruct.gguf",
+                url: URL(string: "https://huggingface.co/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/main/mmproj-F16.gguf")!
+            )
+        ),
+        CatalogModel(
             name: "Gemma 3 4B",
             summary: "Модель Google, которая видит фотографии: можно прикрепить снимок и спросить о нём. Живой и грамотный русский язык.",
             sizeLabel: "≈ 3,3 ГБ",
@@ -50,6 +62,26 @@ enum ModelCatalog {
                 fileName: "uncensored-gemma-3-4b-it-Q4_K_M.gguf",
                 url: URL(string: "https://huggingface.co/mlabonne/gemma-3-4b-it-abliterated-v2-GGUF/resolve/main/gemma-3-4b-it-abliterated-v2.q4_k_m.gguf")!
             )
+        ),
+        CatalogModel(
+            name: "Qwen3 8B",
+            summary: "Заметно умнее 4B, но занимает почти всю память iPhone с 8 ГБ: отвечает медленнее и может закрывать приложение. Если так — выберите в настройках небольшую память разговора. Фото не видит.",
+            sizeLabel: "≈ 5,0 ГБ",
+            badge: "Эксперимент",
+            fileName: "Qwen3-8B-Q4_K_M.gguf",
+            url: URL(string: "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf")!,
+            uncensored: CompanionFile(
+                fileName: "uncensored-Qwen3-8B-Q4_K_M.gguf",
+                url: URL(string: "https://huggingface.co/bartowski/mlabonne_Qwen3-8B-abliterated-GGUF/resolve/main/mlabonne_Qwen3-8B-abliterated-Q4_K_M.gguf")!
+            )
+        ),
+        CatalogModel(
+            name: "DeepSeek R1 7B",
+            summary: "Уменьшенная версия DeepSeek: всегда рассуждает перед ответом, сильна в логике и математике. На iPhone с 8 ГБ работает на пределе памяти. Фото не видит.",
+            sizeLabel: "≈ 4,7 ГБ",
+            badge: "Эксперимент",
+            fileName: "DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
+            url: URL(string: "https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf")!
         ),
         CatalogModel(
             name: "Qwen3 1.7B",

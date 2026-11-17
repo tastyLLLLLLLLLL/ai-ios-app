@@ -44,7 +44,7 @@ struct SettingsView: View {
                 Section {
                     Toggle("Режим размышлений", isOn: $model.settings.thinkingEnabled)
                 } footer: {
-                    Text("Модель сначала обдумывает задачу, потом отвечает. Ответы точнее, но приходят медленнее. Работает с моделями Qwen3 и другими «думающими».")
+                    Text("Модель сначала обдумывает задачу, потом отвечает. Ответы точнее, но приходят медленнее. Работает с моделями Qwen3; DeepSeek R1 рассуждает всегда.")
                 }
 
                 Section {
@@ -125,7 +125,7 @@ struct SettingsView: View {
                 Button("Скачать") { model.models.downloadUncensoredVariant() }
                 Button("Не сейчас", role: .cancel) {}
             } message: {
-                Text("Это отдельный файл модели размером около 2,5 ГБ. Скачивается один раз, лучше по Wi-Fi. Пока он не скачан, действует только инструкция отвечать без отказов.")
+                Text("Это отдельный файл того же размера, что и сама модель. Скачивается один раз, лучше по Wi-Fi. Пока он не скачан, действует только инструкция отвечать без отказов.")
             }
         }
     }
@@ -165,14 +165,14 @@ struct SettingsView: View {
                 Button {
                     model.models.downloadUncensoredVariant()
                 } label: {
-                    Label("Скачать (≈ 2,5 ГБ)", systemImage: "arrow.down.circle.fill")
+                    Label("Скачать версию без ограничений", systemImage: "arrow.down.circle.fill")
                         .font(.footnote.weight(.semibold))
                 }
                 .buttonStyle(.borderless)
             }
 
         case .unavailable:
-            Text("Для выбранной модели нет версии без ограничений — действует только инструкция, и модель может отказывать. Версии без ограничений есть у Qwen3 4B и Gemma 3 4B.")
+            Text("Для выбранной модели нет версии без ограничений — действует только инструкция, и модель может отказывать. Версии без ограничений есть у Qwen3 4B, Qwen3 8B и Gemma 3 4B.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

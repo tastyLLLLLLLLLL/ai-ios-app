@@ -12,8 +12,13 @@ enum ChatTemplate {
     case gemma
     case llama3
     case phi
+    case deepSeek
+
+    /// DeepSeek R1 models are trained to reason first; their answer must start inside a <think> block.
+    var alwaysThinks: Bool { self == .deepSeek }
 
     static func detect(from template: String) -> ChatTemplate {
+        if template.contains("<｜User｜>") { return .deepSeek }
         if template.contains("<start_of_turn>") { return .gemma }
         if template.contains("<|start_header_id|>") { return .llama3 }
         if template.contains("<|im_start|>") { return .chatML }
@@ -71,6 +76,17 @@ enum ChatTemplate {
                 prompt += "<|\(turn.isUser ? "user" : "assistant")|>\(turn.text)<|end|>"
             }
             prompt += "<|assistant|>"
+
+        case .deepSeek:
+            prompt += system
+            for turn in turns {
+                if turn.isUser {
+                    prompt += "<｜User｜>\(turn.text)"
+                } else {
+                    prompt += "<｜Assistant｜>\(turn.text)<｜end▁of▁sentence｜>"
+                }
+            }
+            prompt += "<｜Assistant｜>"
         }
 
         return prompt

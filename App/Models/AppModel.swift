@@ -150,7 +150,10 @@ final class AppModel {
         generationTask = Task {
             do {
                 try await ensureModelLoaded()
-                let (prompt, images) = try await buildPrompt(for: conversationID)
+                let (prompt, images, prefill) = try await buildPrompt(for: conversationID)
+                if !prefill.isEmpty {
+                    updateLastMessage(in: conversationID) { $0.text = prefill }
+                }
                 let options = GenerationOptions(
                     temperature: Float(settings.temperature),
                     maxTokens: settings.maxResponseTokens
@@ -218,7 +221,8 @@ final class AppModel {
     }
 
     /// Builds the prompt, dropping the oldest messages when the conversation no longer fits the context.
-    private func buildPrompt(for conversationID: UUID) async throws -> (String, [EngineImage]) {
+    /// Also returns text the reply must start with (an opened <think> block for models that always reason).
+    private func buildPrompt(for conversationID: UUID) async throws -> (String, [EngineImage], String) {
         guard let conversation = conversations.first(where: { $0.id == conversationID }) else {
             throw EngineError.notLoaded
         }
@@ -256,11 +260,15 @@ final class AppModel {
                 )
             }
             var prompt = template.render(system: system, turns: promptTurns)
-            if supportsThinking, !settings.thinkingEnabled {
+            var prefill = ""
+            if template.alwaysThinks {
+                prefill = "<think>\n"
+                prompt += prefill
+            } else if supportsThinking, !settings.thinkingEnabled {
                 prompt += "<think>\n\n</think>\n\n"
             }
             let images = turns.flatMap(\.images)
-            if try await engine.tokenCount(prompt, images: images) <= budget { return (prompt, images) }
+            if try await engine.tokenCount(prompt, images: images) <= budget { return (prompt, images, prefill) }
             guard turns.count > 1 else { throw EngineError.promptTooLong }
             turns.removeFirst(turns.count > 2 ? 2 : 1)
         }
