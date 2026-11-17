@@ -266,13 +266,15 @@ struct InputBar: View {
                         .contentTransition(.symbolEffect(.replace))
                         .foregroundStyle(.white)
                         .frame(width: 36, height: 36)
-                        .accentButtonLabel(Circle())
+                        .background(Theme.accent, in: Circle())
+                        .contentShape(Circle())
                         .contentShape(Circle())
                         .opacity(sendEnabled ? 1 : 0.35)
                         .scaleEffect(sendEnabled ? 1 : 0.9)
                         .animation(.smooth, value: sendEnabled)
                 }
-                .liquidButton(prominent: true, shape: .circle, pressScale: 0.88)
+                // Own circle: the system glass style adds padding and pushed the button past the field.
+                .buttonStyle(PressableStyle(scale: 0.88))
                 .disabled(!sendEnabled)
                 .padding(.trailing, 6)
                 .padding(.bottom, 5)
