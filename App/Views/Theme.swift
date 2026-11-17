@@ -234,56 +234,112 @@ extension AuroraBackground {
     }
 }
 
-/// Frosted card used for panels and list rows.
-struct GlassCard: ViewModifier {
+// MARK: - Glass
+
+/// Liquid glass on iOS 26 and newer; a translucent fill or material on older systems.
+struct GlassBackground<S: Shape>: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
-    var cornerRadius: CGFloat = 22
-    /// Real background blur. Costly, so it is only used for the few elements that float over content.
+    let shape: S
+    /// Coloured glass for primary buttons.
+    var tint: Color?
+    /// Glass that reacts to touches (iOS 26).
+    var interactive = false
+    /// Real background blur on older systems. Costly, so only for elements floating over content.
     var blurred = false
 
     func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        content
-            .background {
-                if blurred {
-                    shape.fill(.ultraThinMaterial)
-                } else {
-                    shape.fill(colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.6))
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            content.glassEffect(glass, in: shape)
+        } else {
+            fallback(content)
+        }
+        #else
+        fallback(content)
+        #endif
+    }
+
+    #if compiler(>=6.2)
+    @available(iOS 26.0, *)
+    private var glass: Glass {
+        var glass = Glass.regular
+        if let tint { glass = glass.tint(tint) }
+        if interactive { glass = glass.interactive() }
+        return glass
+    }
+    #endif
+
+    @ViewBuilder
+    private func fallback(_ content: Content) -> some View {
+        if let tint {
+            content.background(
+                shape.fill(
+                    LinearGradient(colors: [tint, tint.opacity(0.75)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                )
+            )
+        } else {
+            content
+                .background {
+                    if blurred {
+                        shape.fill(.ultraThinMaterial)
+                    } else {
+                        shape.fill(colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.6))
+                    }
                 }
-            }
-            .overlay(shape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
+                .overlay(shape.stroke(Color.primary.opacity(0.08), lineWidth: 1))
+        }
+    }
+}
+
+/// True when the system draws liquid glass, so views can skip their own decorations.
+enum GlassSupport {
+    static var isAvailable: Bool {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) { return true }
+        #endif
+        return false
     }
 }
 
 extension View {
-    func glassCard(cornerRadius: CGFloat = 22, blurred: Bool = false) -> some View {
-        modifier(GlassCard(cornerRadius: cornerRadius, blurred: blurred))
+    /// Glass panel with rounded corners: cards, list rows, the input bar.
+    func glassCard(cornerRadius: CGFloat = 22, blurred: Bool = false, interactive: Bool = false) -> some View {
+        modifier(GlassBackground(
+            shape: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous),
+            interactive: interactive,
+            blurred: blurred
+        ))
+    }
+
+    /// Glass in any shape, optionally tinted with a colour.
+    func glass<S: Shape>(_ shape: S, tint: Color? = nil, interactive: Bool = false, blurred: Bool = false) -> some View {
+        modifier(GlassBackground(shape: shape, tint: tint, interactive: interactive, blurred: blurred))
     }
 }
 
-/// The glowing orb used as the app's mark.
+/// The glowing orb used as the app's mark. It floats and sways gently.
 struct OrbLogo: View {
-    var size: CGFloat = 96
+    var size: CGFloat = 64
     @State private var pulse = false
-    @State private var spin = false
+    @State private var float = false
+    @State private var sway = false
 
     var body: some View {
         ZStack {
             Circle()
                 .fill(
                     RadialGradient(
-                        colors: [Theme.tint.opacity(0.7), Theme.tint.opacity(0)],
+                        colors: [Theme.tint.opacity(0.6), Theme.tint.opacity(0)],
                         center: .center,
                         startRadius: size * 0.3,
                         endRadius: size * 0.85
                     )
                 )
                 .frame(width: size * 1.7, height: size * 1.7)
-                .opacity(pulse ? 1 : 0.6)
-                .scaleEffect(pulse ? 1.08 : 0.94)
+                .opacity(pulse ? 1 : 0.55)
+                .scaleEffect(pulse ? 1.1 : 0.92)
             Circle()
                 .fill(Theme.accent)
-                .rotationEffect(.degrees(spin ? 360 : 0))
                 .overlay(
                     Circle()
                         .fill(
@@ -295,11 +351,16 @@ struct OrbLogo: View {
                             )
                         )
                 )
+                .shadow(color: Theme.tint.opacity(0.35), radius: size * 0.18, y: size * 0.08)
             Image(systemName: "sparkles")
-                .font(.system(size: size * 0.4, weight: .semibold))
+                .font(.system(size: size * 0.42, weight: .semibold))
                 .foregroundStyle(.white)
+                .rotationEffect(.degrees(sway ? 8 : -8))
+                .scaleEffect(pulse ? 1.06 : 0.96)
         }
         .frame(width: size, height: size)
+        .rotationEffect(.degrees(sway ? 4 : -4))
+        .offset(y: float ? -5 : 5)
         .onAppear {
             if Motion.isRunning { startMotion() }
         }
@@ -309,7 +370,8 @@ struct OrbLogo: View {
             } else {
                 withAnimation(.easeOut(duration: 0.8)) {
                     pulse = false
-                    spin = false
+                    float = false
+                    sway = false
                 }
             }
         }
@@ -319,8 +381,11 @@ struct OrbLogo: View {
         withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) {
             pulse = true
         }
-        withAnimation(.linear(duration: 18).repeatForever(autoreverses: false)) {
-            spin = true
+        withAnimation(.easeInOut(duration: 3.2).repeatForever(autoreverses: true)) {
+            float = true
+        }
+        withAnimation(.easeInOut(duration: 4.6).repeatForever(autoreverses: true)) {
+            sway = true
         }
     }
 }

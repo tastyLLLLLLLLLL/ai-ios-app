@@ -4,7 +4,7 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var confirmDeleteChats = false
-    @State private var confirmUncensoredDownload = false
+    @State private var appeared = false
 
     private var uncensoredState: UncensoredState { model.models.uncensoredState }
 
@@ -22,95 +22,120 @@ struct SettingsView: View {
         @Bindable var model = model
 
         NavigationStack {
-            Form {
-                themeSection
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    themeSection
 
-                Section {
-                    Toggle(isOn: $model.settings.uncensored) {
-                        Label {
-                            Text("Без цензуры")
-                        } icon: {
-                            Image(systemName: model.settings.uncensored ? "lock.open.fill" : "lock.fill")
-                                .contentTransition(.symbolEffect(.replace))
-                                .symbolEffect(.bounce, value: model.settings.uncensored)
-                                .foregroundStyle(Theme.accent)
+                    SettingsSection(
+                        footer: "Модель перестаёт отказываться отвечать и не добавляет предупреждений. Для этого используется версия той же модели со снятыми ограничениями — она скачивается один раз. За то, как использовать ответы, отвечаете вы."
+                    ) {
+                        Toggle(isOn: $model.settings.uncensored) {
+                            SettingsLabel(
+                                title: "Без цензуры",
+                                icon: model.settings.uncensored ? "lock.open.fill" : "lock.fill",
+                                bounce: model.settings.uncensored
+                            )
+                        }
+                        if model.settings.uncensored {
+                            uncensoredStatus
+                                .transition(.opacity.combined(with: .move(edge: .top)))
                         }
                     }
-                    if model.settings.uncensored {
-                        uncensoredStatus
-                            .transition(.opacity.combined(with: .move(edge: .top)))
-                    }
-                } footer: {
-                    Text("Модель перестаёт отказываться отвечать и не добавляет предупреждений. Для этого используется версия той же модели со снятыми ограничениями — её нужно один раз скачать. За то, как использовать ответы, отвечаете вы.")
-                }
 
-                Section {
-                    Toggle(isOn: $model.settings.thinkingEnabled) {
-                        Label {
-                            Text("Режим размышлений")
-                        } icon: {
-                            Image(systemName: "brain")
-                                .symbolEffect(.bounce, value: model.settings.thinkingEnabled)
-                                .foregroundStyle(Theme.accent)
+                    SettingsSection(
+                        footer: "Модель сначала обдумывает задачу, потом отвечает. Ответы точнее, но приходят медленнее. Работает с моделями Qwen3."
+                    ) {
+                        Toggle(isOn: $model.settings.thinkingEnabled) {
+                            SettingsLabel(title: "Режим размышлений", icon: "brain", bounce: model.settings.thinkingEnabled)
                         }
                     }
-                } footer: {
-                    Text("Модель сначала обдумывает задачу, потом отвечает. Ответы точнее, но приходят медленнее. Работает с моделями Qwen3; DeepSeek R1 рассуждает всегда.")
-                }
 
-                Section {
-                    VStack(alignment: .leading, spacing: 6) {
+                    SettingsSection(footer: "Ниже — ответы точнее и предсказуемее, выше — разнообразнее.") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                SettingsLabel(title: "Креативность", icon: "wand.and.stars", bounce: false)
+                                Spacer()
+                                Text(String(format: "%.1f", model.settings.temperature))
+                                    .monospacedDigit()
+                                    .contentTransition(.numericText())
+                                    .foregroundStyle(.secondary)
+                                    .animation(.snappy, value: model.settings.temperature)
+                            }
+                            Slider(value: $model.settings.temperature, in: 0...1.5, step: 0.1)
+                        }
+                    }
+
+                    SettingsSection(
+                        footer: "Чем больше память разговора, тем дольше модель помнит начало чата, но тем больше оперативной памяти ей нужно. Если приложение закрывается само — выберите вариант поменьше."
+                    ) {
                         HStack {
-                            Text("Креативность")
+                            SettingsLabel(title: "Память разговора", icon: "memorychip", bounce: false)
                             Spacer()
-                            Text(String(format: "%.1f", model.settings.temperature))
-                                .monospacedDigit()
-                                .contentTransition(.numericText())
-                                .foregroundStyle(.secondary)
-                                .animation(.snappy, value: model.settings.temperature)
+                            Picker("Память разговора", selection: $model.settings.contextSize) {
+                                Text("Небольшая").tag(2048)
+                                Text("Обычная").tag(4096)
+                                Text("Большая").tag(8192)
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
                         }
-                        Slider(value: $model.settings.temperature, in: 0...1.5, step: 0.1)
-                    }
-                } footer: {
-                    Text("Ниже — ответы точнее и предсказуемее, выше — разнообразнее.")
-                }
-
-                Section {
-                    Picker("Память разговора", selection: $model.settings.contextSize) {
-                        Text("Небольшая").tag(2048)
-                        Text("Обычная").tag(4096)
-                        Text("Большая").tag(8192)
-                    }
-                    Picker("Длина ответа", selection: $model.settings.maxResponseTokens) {
-                        Text("Короткая").tag(512)
-                        Text("Обычная").tag(1024)
-                        Text("Длинная").tag(2048)
-                        Text("Очень длинная").tag(4096)
-                    }
-                } footer: {
-                    Text("Чем больше память разговора, тем дольше модель помнит начало чата, но тем больше оперативной памяти ей нужно. Если приложение закрывается само — выберите вариант поменьше.")
-                }
-
-                Section {
-                    TextEditor(text: $model.settings.systemPrompt)
-                        .frame(minHeight: 110)
-                    Button("Вернуть стандартные") {
-                        withAnimation(.smooth) {
-                            model.settings.systemPrompt = AppSettings.defaultSystemPrompt
+                        Divider()
+                        HStack {
+                            SettingsLabel(title: "Длина ответа", icon: "text.alignleft", bounce: false)
+                            Spacer()
+                            Picker("Длина ответа", selection: $model.settings.maxResponseTokens) {
+                                Text("Короткая").tag(512)
+                                Text("Обычная").tag(1024)
+                                Text("Длинная").tag(2048)
+                                Text("Очень длинная").tag(4096)
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
                         }
                     }
-                } header: {
-                    Text("Инструкции для модели")
-                } footer: {
-                    Text("Опишите, как модель должна себя вести: стиль, язык, роль.")
-                }
 
-                Section {
-                    Button("Удалить все чаты", role: .destructive) {
+                    SettingsSection(
+                        header: "Инструкции для модели",
+                        footer: "Опишите, как модель должна себя вести: стиль, язык, роль."
+                    ) {
+                        TextEditor(text: $model.settings.systemPrompt)
+                            .scrollContentBackground(.hidden)
+                            .frame(minHeight: 110)
+                        Divider()
+                        Button {
+                            withAnimation(.smooth) {
+                                model.settings.systemPrompt = AppSettings.defaultSystemPrompt
+                            }
+                        } label: {
+                            Label("Вернуть стандартные", systemImage: "arrow.uturn.backward")
+                                .font(.subheadline.weight(.medium))
+                        }
+                        .buttonStyle(PressableStyle())
+                    }
+
+                    Button {
                         confirmDeleteChats = true
+                    } label: {
+                        Label("Удалить все чаты", systemImage: "trash")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.red)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 15)
+                            .glassCard(cornerRadius: 20, interactive: true)
                     }
+                    .buttonStyle(PressableStyle(scale: 0.97))
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 30)
+                .opacity(appeared ? 1 : 0)
+                .offset(y: appeared ? 0 : 12)
+                .animation(.easeOut(duration: 0.25), value: appeared)
             }
+            .scrollDismissesKeyboard(.interactively)
+            .background(AuroraBackground())
+            .tint(Theme.tint)
+            .onAppear { appeared = true }
             .animation(.easeInOut(duration: 0.5), value: ThemeStore.shared.palette.id)
             .animation(.smooth, value: model.settings.uncensored)
             .animation(.smooth, value: uncensoredKind)
@@ -125,26 +150,24 @@ struct SettingsView: View {
             }
             .onChange(of: model.settings) { old, new in
                 new.save()
+                // Turning the switch on starts the download right away, so it cannot be missed.
                 if new.uncensored, !old.uncensored, uncensoredState == .notDownloaded {
-                    confirmUncensoredDownload = true
+                    model.models.downloadUncensoredVariant()
                 }
             }
             .confirmationDialog("Удалить все чаты без возможности восстановить?", isPresented: $confirmDeleteChats, titleVisibility: .visible) {
                 Button("Удалить все", role: .destructive) { model.deleteAllChats() }
                 Button("Отмена", role: .cancel) {}
             }
-            .alert("Скачать версию без ограничений?", isPresented: $confirmUncensoredDownload) {
-                Button("Скачать") { model.models.downloadUncensoredVariant() }
-                Button("Не сейчас", role: .cancel) {}
-            } message: {
-                Text("Это отдельный файл того же размера, что и сама модель. Скачивается один раз, лучше по Wi-Fi. Пока он не скачан, действует только инструкция отвечать без отказов.")
-            }
         }
     }
 
     private var themeSection: some View {
         let theme = ThemeStore.shared
-        return Section {
+        return SettingsSection(
+            header: "Темы",
+            footer: "«Замирать во время ответа» останавливает движение фона, пока нейросеть пишет ответ, чтобы графический чип был занят только ей."
+        ) {
             Picker("Режим", selection: Binding(
                 get: { theme.appearance },
                 set: { theme.setAppearance($0) }
@@ -155,6 +178,9 @@ struct SettingsView: View {
             }
             .pickerStyle(.segmented)
 
+            Text("Цвет оформления")
+                .font(.subheadline.weight(.medium))
+                .padding(.top, 4)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 16) {
                     ForEach(Palette.all) { palette in
@@ -190,58 +216,55 @@ struct SettingsView: View {
                         .accessibilityLabel("Тема \(palette.name)")
                     }
                 }
-                .padding(.vertical, 6)
+                .padding(.vertical, 4)
                 .padding(.horizontal, 2)
             }
             .sensoryFeedback(.selection, trigger: theme.palette.id)
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Иконка приложения")
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 14) {
-                        ForEach(Palette.all) { palette in
-                            let isSelected = palette.id == theme.iconID
-                            Button {
-                                theme.setIcon(palette.id)
-                            } label: {
-                                Image("IconPreview-\(palette.id)")
-                                    .resizable()
-                                    .frame(width: 52, height: 52)
-                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                    .padding(4)
-                                    .overlay {
-                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                            .strokeBorder(palette.tint, lineWidth: 2)
-                                            .opacity(isSelected ? 1 : 0)
-                                    }
-                                    .scaleEffect(isSelected ? 1 : 0.92)
-                                    .animation(.spring(response: 0.4, dampingFraction: 0.55), value: isSelected)
-                            }
-                            .buttonStyle(PressableStyle(scale: 0.9))
-                            .accessibilityLabel("Иконка \(palette.name)")
+            Divider()
+
+            Text("Иконка приложения")
+                .font(.subheadline.weight(.medium))
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    ForEach(Palette.all) { palette in
+                        let isSelected = palette.id == theme.iconID
+                        Button {
+                            theme.setIcon(palette.id)
+                        } label: {
+                            Image("IconPreview-\(palette.id)")
+                                .resizable()
+                                .frame(width: 52, height: 52)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .padding(4)
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .strokeBorder(palette.tint, lineWidth: 2)
+                                        .opacity(isSelected ? 1 : 0)
+                                }
+                                .scaleEffect(isSelected ? 1 : 0.92)
+                                .animation(.spring(response: 0.4, dampingFraction: 0.55), value: isSelected)
                         }
+                        .buttonStyle(PressableStyle(scale: 0.9))
+                        .accessibilityLabel("Иконка \(palette.name)")
                     }
-                    .padding(.vertical, 4)
-                    .padding(.horizontal, 2)
                 }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 2)
             }
+
+            Divider()
 
             Toggle(isOn: Binding(
                 get: { model.settings.pauseMotionWhileAnswering },
                 set: { model.settings.pauseMotionWhileAnswering = $0 }
             )) {
-                Label {
-                    Text("Замирать во время ответа")
-                } icon: {
-                    Image(systemName: model.settings.pauseMotionWhileAnswering ? "pause.circle.fill" : "play.circle.fill")
-                        .contentTransition(.symbolEffect(.replace))
-                        .foregroundStyle(Theme.accent)
-                }
+                SettingsLabel(
+                    title: "Замирать во время ответа",
+                    icon: model.settings.pauseMotionWhileAnswering ? "pause.circle.fill" : "play.circle.fill",
+                    bounce: model.settings.pauseMotionWhileAnswering
+                )
             }
-        } header: {
-            Text("Темы")
-        } footer: {
-            Text("Светлый или тёмный режим, цвет оформления и иконка на домашнем экране. «Замирать во время ответа» останавливает движение фона, пока нейросеть пишет ответ, чтобы графический чип был занят только ей.")
         }
     }
 
@@ -270,11 +293,14 @@ struct SettingsView: View {
                 ProgressView(value: progress.fraction)
                     .tint(Theme.tint)
                     .animation(.linear(duration: 0.3), value: progress.fraction)
+                Text("Пока файл не скачан, действует только инструкция, и модель может отказывать.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
         case .notDownloaded:
             VStack(alignment: .leading, spacing: 8) {
-                Text("Версия без ограничений ещё не скачана — пока действует только инструкция, и модель может отказывать.")
+                Text("Версия без ограничений для этой модели ещё не скачана — пока действует только инструкция, и модель может отказывать.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 Button {
@@ -282,14 +308,72 @@ struct SettingsView: View {
                 } label: {
                     Label("Скачать версию без ограничений", systemImage: "arrow.down.circle.fill")
                         .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .glass(Capsule(), tint: Theme.tint, interactive: true)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(PressableStyle())
             }
 
         case .unavailable:
-            Text("Для выбранной модели нет версии без ограничений — действует только инструкция, и модель может отказывать. Версии без ограничений есть у Qwen3 4B, Qwen3 8B и Gemma 3 4B.")
+            Text("Для выбранной модели нет версии без ограничений — действует только инструкция, и модель может отказывать. Модели с такой версией отмечены плашкой «Без цензуры».")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+        }
+    }
+}
+
+// MARK: - Building blocks
+
+/// A group of settings on one glass card, with an optional heading and explanation.
+private struct SettingsSection<Content: View>: View {
+    var header: String?
+    var footer: String?
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let header {
+                Text(header)
+                    .font(.footnote.weight(.semibold))
+                    .textCase(.uppercase)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 6)
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                content()
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassCard(cornerRadius: 24)
+
+            if let footer {
+                Text(footer)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+            }
+        }
+    }
+}
+
+/// Title with a coloured icon, used for setting rows.
+private struct SettingsLabel: View {
+    let title: String
+    let icon: String
+    let bounce: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .contentTransition(.symbolEffect(.replace))
+                .symbolEffect(.bounce, value: bounce)
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(Theme.accent, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            Text(title)
         }
     }
 }

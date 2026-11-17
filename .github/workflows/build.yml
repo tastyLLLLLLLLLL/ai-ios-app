@@ -63,6 +63,14 @@ jobs:
           path: Frameworks/llama.xcframework
           key: llama-device-${{ env.LLAMA_TAG }}
 
+      # Liquid glass needs the iOS 26 SDK, so the newest installed Xcode is used.
+      - name: Use the newest Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          newest=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)
+          sudo xcode-select -s "$newest"
+          xcodebuild -version
+
       - name: Generate the Xcode project
         run: |
           brew install xcodegen

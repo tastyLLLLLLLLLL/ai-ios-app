@@ -117,6 +117,41 @@ struct ChatView: View {
             .padding(.vertical, 8)
             .glassCard(cornerRadius: 18, blurred: true)
             .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else if model.settings.uncensored, messages.isEmpty {
+            uncensoredPill
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    /// Reminds that "Без цензуры" is on but its model file is not ready yet.
+    @ViewBuilder
+    private var uncensoredPill: some View {
+        switch model.models.uncensoredState {
+        case .downloading(let progress):
+            Label(
+                progress.total > 0
+                    ? "Скачиваю версию без цензуры · \(Int(progress.fraction * 100))%"
+                    : "Скачиваю версию без цензуры…",
+                systemImage: "arrow.down.circle"
+            )
+            .font(.footnote.weight(.medium))
+            .monospacedDigit()
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .glassCard(cornerRadius: 18, blurred: true)
+        case .notDownloaded:
+            Button {
+                model.models.downloadUncensoredVariant()
+            } label: {
+                Label("Скачать версию без цензуры для этой модели", systemImage: "lock.open")
+                    .font(.footnote.weight(.semibold))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .glassCard(cornerRadius: 18, blurred: true, interactive: true)
+            }
+            .buttonStyle(PressableStyle())
+        default:
+            EmptyView()
         }
     }
 }
@@ -184,7 +219,7 @@ struct InputBar: View {
                         .contentTransition(.symbolEffect(.replace))
                         .foregroundStyle(.white)
                         .frame(width: 36, height: 36)
-                        .background(Theme.accent, in: Circle())
+                        .glass(Circle(), tint: Theme.tint, interactive: true)
                         .opacity(sendEnabled ? 1 : 0.35)
                         .scaleEffect(sendEnabled ? 1 : 0.9)
                         .animation(.smooth, value: sendEnabled)
@@ -525,7 +560,7 @@ struct EmptyStateView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 22) {
-                OrbLogo(size: 96)
+                OrbLogo(size: 60)
                     .padding(.top, 48)
                     .scaleEffect(appeared ? 1 : 0.7)
                     .opacity(appeared ? 1 : 0)
@@ -533,7 +568,7 @@ struct EmptyStateView: View {
 
                 VStack(spacing: 8) {
                     Text("Чем помочь?")
-                        .font(.system(.largeTitle, design: .rounded).weight(.bold))
+                        .font(.system(.title, design: .rounded).weight(.bold))
                     Label("Работает без интернета, всё остаётся на телефоне", systemImage: "lock.fill")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -564,7 +599,7 @@ struct EmptyStateView: View {
                                     Spacer(minLength: 0)
                                 }
                                 .padding(14)
-                                .glassCard(cornerRadius: 18)
+                                .glassCard(cornerRadius: 18, interactive: true)
                             }
                             .buttonStyle(PressableStyle())
                             .opacity(appeared ? 1 : 0)

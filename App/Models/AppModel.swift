@@ -272,7 +272,8 @@ final class AppModel {
 
         var system = settings.systemPrompt
         if settings.uncensored {
-            system += "\n\n" + AppSettings.uncensoredInstruction
+            // Placed first so the model weighs it above everything else.
+            system = AppSettings.uncensoredInstruction + "\n\n" + system
         }
 
         let budget = settings.contextSize - min(settings.maxResponseTokens, settings.contextSize / 2)

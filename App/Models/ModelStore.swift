@@ -102,8 +102,14 @@ final class ModelStore {
 
     var canSeePhotos: Bool { visionPath != nil }
 
+    /// Uncensored variant of the selected model.
     var uncensoredState: UncensoredState {
-        guard let variant = selectedCatalogModel?.uncensored else { return .unavailable }
+        guard let model = selectedCatalogModel else { return .unavailable }
+        return uncensoredState(for: model)
+    }
+
+    func uncensoredState(for model: CatalogModel) -> UncensoredState {
+        guard let variant = model.uncensored else { return .unavailable }
         if files.contains(variant.fileName) { return .ready }
         if let progress = downloads[variant.fileName] { return .downloading(progress) }
         return .notDownloaded
@@ -137,6 +143,7 @@ final class ModelStore {
     // MARK: - Changes
 
     func refresh() {
+        removeRetiredFiles()
         let found = (try? FileManager.default.contentsOfDirectory(atPath: Downloader.modelsDirectory.path)) ?? []
         files = Set(found.filter { $0.lowercased().hasSuffix(".gguf") })
         installed = files.filter { !Self.isCompanion($0) }.sorted()
@@ -144,6 +151,20 @@ final class ModelStore {
             select(installed.first)
         } else if selectedFile == nil, let first = installed.first {
             select(first)
+        }
+    }
+
+    private var retiredChecked = false
+
+    /// Deletes files of models that are no longer offered (they did not fit in the phone's memory).
+    private func removeRetiredFiles() {
+        guard !retiredChecked else { return }
+        retiredChecked = true
+        for name in ModelCatalog.retiredFileNames {
+            let path = path(for: name)
+            if FileManager.default.fileExists(atPath: path) {
+                try? FileManager.default.removeItem(atPath: path)
+            }
         }
     }
 
@@ -165,8 +186,23 @@ final class ModelStore {
     }
 
     func downloadUncensoredVariant() {
-        guard let variant = selectedCatalogModel?.uncensored else { return }
+        if let model = selectedCatalogModel { downloadUncensored(for: model) }
+    }
+
+    func downloadUncensored(for model: CatalogModel) {
+        guard let variant = model.uncensored else { return }
         download(url: variant.url, fileName: variant.fileName)
+    }
+
+    func cancelUncensored(for model: CatalogModel) {
+        if let variant = model.uncensored { cancelDownload(variant.fileName) }
+    }
+
+    /// Removes only the uncensored variant, keeping the model itself.
+    func deleteUncensored(for model: CatalogModel) {
+        guard let variant = model.uncensored else { return }
+        try? FileManager.default.removeItem(atPath: path(for: variant.fileName))
+        refresh()
     }
 
     /// Starts a download from a direct link to a .gguf file. Returns false if the link is not usable.

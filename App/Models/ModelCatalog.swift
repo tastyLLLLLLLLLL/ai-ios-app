@@ -11,7 +11,6 @@ enum ModelGroup: String, CaseIterable, Identifiable {
     case everyday
     case vision
     case fast
-    case smart
 
     var id: String { rawValue }
 
@@ -20,7 +19,6 @@ enum ModelGroup: String, CaseIterable, Identifiable {
         case .everyday: return "На каждый день"
         case .vision: return "С фотографиями"
         case .fast: return "Для скорости"
-        case .smart: return "Самые умные"
         }
     }
 
@@ -29,7 +27,6 @@ enum ModelGroup: String, CaseIterable, Identifiable {
         case .everyday: return "Лучший баланс ума и скорости для iPhone с 8 ГБ памяти"
         case .vision: return "Понимают прикреплённые снимки"
         case .fast: return "Отвечают быстрее, меньше греют телефон"
-        case .smart: return "Эксперимент: работают на пределе памяти и медленнее"
         }
     }
 
@@ -38,7 +35,6 @@ enum ModelGroup: String, CaseIterable, Identifiable {
         case .everyday: return "star.fill"
         case .vision: return "photo.fill"
         case .fast: return "bolt.fill"
-        case .smart: return "brain.head.profile"
         }
     }
 }
@@ -64,7 +60,7 @@ enum ModelCatalog {
         CatalogModel(
             group: .everyday,
             name: "Qwen3 4B",
-            summary: "Самая умная из тех, что уверенно работают на iPhone с 8 ГБ памяти. Умеет рассуждать перед ответом, хорошо знает русский. Фото не видит.",
+            summary: "Самая умная из тех, что уверенно работают на iPhone с 8 ГБ памяти. Умеет рассуждать перед ответом, хорошо знает русский.",
             sizeLabel: "≈ 2,5 ГБ",
             badge: "Рекомендуем",
             fileName: "Qwen3-4B-Q4_K_M.gguf",
@@ -85,6 +81,10 @@ enum ModelCatalog {
             vision: CompanionFile(
                 fileName: "mmproj-Qwen3-VL-4B-Instruct.gguf",
                 url: URL(string: "https://huggingface.co/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/main/mmproj-F16.gguf")!
+            ),
+            uncensored: CompanionFile(
+                fileName: "uncensored-Qwen3-VL-4B-Instruct-Q4_K_M.gguf",
+                url: URL(string: "https://huggingface.co/noctrex/Huihui-Qwen3-VL-4B-Instruct-abliterated-GGUF/resolve/main/Huihui-Qwen3-VL-4B-Instruct-abliterated-Q4_K_M.gguf")!
             )
         ),
         CatalogModel(
@@ -105,35 +105,17 @@ enum ModelCatalog {
             )
         ),
         CatalogModel(
-            group: .smart,
-            name: "Qwen3 8B",
-            summary: "Заметно умнее 4B, но занимает почти всю память iPhone с 8 ГБ: отвечает медленнее и может закрывать приложение. Если так — выберите в настройках небольшую память разговора. Фото не видит.",
-            sizeLabel: "≈ 5,0 ГБ",
-            badge: "Эксперимент",
-            fileName: "Qwen3-8B-Q4_K_M.gguf",
-            url: URL(string: "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf")!,
-            uncensored: CompanionFile(
-                fileName: "uncensored-Qwen3-8B-Q4_K_M.gguf",
-                url: URL(string: "https://huggingface.co/bartowski/mlabonne_Qwen3-8B-abliterated-GGUF/resolve/main/mlabonne_Qwen3-8B-abliterated-Q4_K_M.gguf")!
-            )
-        ),
-        CatalogModel(
-            group: .smart,
-            name: "DeepSeek R1 7B",
-            summary: "Уменьшенная версия DeepSeek: всегда рассуждает перед ответом, сильна в логике и математике. На iPhone с 8 ГБ работает на пределе памяти. Фото не видит.",
-            sizeLabel: "≈ 4,7 ГБ",
-            badge: "Эксперимент",
-            fileName: "DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
-            url: URL(string: "https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf")!
-        ),
-        CatalogModel(
             group: .fast,
             name: "Qwen3 1.7B",
-            summary: "Лёгкая и быстрая. Отвечает заметно проще, зато меньше греет телефон и экономит место. Фото не видит.",
+            summary: "Лёгкая и быстрая. Отвечает заметно проще, зато меньше греет телефон и экономит место.",
             sizeLabel: "≈ 1,8 ГБ",
             badge: "Быстрая",
             fileName: "Qwen3-1.7B-Q8_0.gguf",
-            url: URL(string: "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf")!
+            url: URL(string: "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf")!,
+            uncensored: CompanionFile(
+                fileName: "uncensored-Qwen3-1.7B-Q8_0.gguf",
+                url: URL(string: "https://huggingface.co/bartowski/mlabonne_Qwen3-1.7B-abliterated-GGUF/resolve/main/mlabonne_Qwen3-1.7B-abliterated-Q8_0.gguf")!
+            )
         )
     ]
 
@@ -141,6 +123,13 @@ enum ModelCatalog {
     static let companionFileNames: Set<String> = Set(
         models.flatMap { [$0.vision?.fileName, $0.uncensored?.fileName].compactMap { $0 } }
     )
+
+    /// Files of models that were removed from the catalog; deleted on launch to free space.
+    static let retiredFileNames = [
+        "Qwen3-8B-Q4_K_M.gguf",
+        "uncensored-Qwen3-8B-Q4_K_M.gguf",
+        "DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf"
+    ]
 
     static func models(in group: ModelGroup) -> [CatalogModel] {
         models.filter { $0.group == group }
