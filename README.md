@@ -1,5 +1,7 @@
 # Pocket AI
 
+<p align="center"><img src="docs/screenshots/00-hero.jpg" alt="Pocket AI"></p>
+
 Личное приложение для iPhone: чат с нейросетями в двух режимах.
 
 - **Офлайн** — модель работает прямо на телефоне, без интернета. Разговоры никуда не уходят.
@@ -11,24 +13,30 @@
 
 ## Как выглядит
 
-Снимки сделаны автоматически в симуляторе iPhone (iOS 26) с моделью Qwen3 1.7B; ответы на них настоящие.
+Снимки с настоящего iPhone.
 
-<p>
-  <img src="https://github.com/tastyLLLLLLLLLL/ai-ios-app/raw/screenshots/01-home.png" width="200" alt="Главный экран">
-  <img src="https://github.com/tastyLLLLLLLLLL/ai-ios-app/raw/screenshots/08-chat.png" width="200" alt="Ответ модели">
-  <img src="https://github.com/tastyLLLLLLLLLL/ai-ios-app/raw/screenshots/09-code.png" width="200" alt="Ответ с кодом">
-  <img src="https://github.com/tastyLLLLLLLLLL/ai-ios-app/raw/screenshots/10-chats.png" width="200" alt="Список чатов">
+<p align="center">
+  <img src="docs/screenshots/01-home.jpg" width="240" alt="Главный экран">
+  <img src="docs/screenshots/02-offline.jpg" width="240" alt="Офлайн-ответ">
+  <img src="docs/screenshots/03-code.jpg" width="240" alt="Код">
 </p>
-<p>
-  <img src="https://github.com/tastyLLLLLLLLLL/ai-ios-app/raw/screenshots/02-models.png" width="200" alt="Офлайн-модели">
-  <img src="https://github.com/tastyLLLLLLLLLL/ai-ios-app/raw/screenshots/03-online.png" width="200" alt="Подключение к серверу">
-  <img src="https://github.com/tastyLLLLLLLLLL/ai-ios-app/raw/screenshots/04-settings.png" width="200" alt="Настройки">
-  <img src="https://github.com/tastyLLLLLLLLLL/ai-ios-app/raw/screenshots/11-photo.png" width="200" alt="Вопрос по фото">
+<p align="center">
+  <img src="docs/screenshots/04-photo.jpg" width="240" alt="Вопрос по фото">
+  <img src="docs/screenshots/05-server-chat.jpg" width="240" alt="Модель на сервере">
+  <img src="docs/screenshots/06-chats.jpg" width="240" alt="Список чатов">
 </p>
-<p>
-  <img src="https://github.com/tastyLLLLLLLLLL/ai-ios-app/raw/screenshots/05-theme-sunset-waves.png" width="200" alt="Тема «Закат», фон «Волны»">
-  <img src="https://github.com/tastyLLLLLLLLLL/ai-ios-app/raw/screenshots/06-theme-forest-stars.png" width="200" alt="Тема «Лес», фон «Звёзды»">
-  <img src="https://github.com/tastyLLLLLLLLLL/ai-ios-app/raw/screenshots/07-theme-lilac-retro.png" width="200" alt="Тема «Сирень», фон «Ретро»">
+<p align="center">
+  <img src="docs/screenshots/07-models.jpg" width="240" alt="Офлайн-модели">
+  <img src="docs/screenshots/08-server.jpg" width="240" alt="Свой сервер">
+  <img src="docs/screenshots/09-studio.jpg" width="240" alt="Студия">
+</p>
+<p align="center">
+  <img src="docs/screenshots/10-appearance.jpg" width="240" alt="Оформление">
+  <img src="docs/screenshots/11-settings.jpg" width="240" alt="Настройки">
+  <img src="docs/screenshots/12-theme-ocean.jpg" width="240" alt="Тема «Океан»">
+</p>
+<p align="center">
+  <img src="docs/screenshots/13-theme-graphite.jpg" width="240" alt="Тема «Графит»">
 </p>
 
 ## Возможности
