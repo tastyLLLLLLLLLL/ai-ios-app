@@ -8,6 +8,11 @@ on:
 permissions:
   contents: write
 
+# Only the newest commit gets built and published.
+concurrency:
+  group: build
+  cancel-in-progress: true
+
 env:
   # Version of the llama.cpp engine the app is built with.
   LLAMA_TAG: b12445
