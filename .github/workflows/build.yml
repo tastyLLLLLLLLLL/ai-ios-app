@@ -102,7 +102,7 @@ jobs:
       - name: Check that the alternate app icons are included
         run: |
           /usr/libexec/PlistBuddy -c "Print :CFBundleIcons:CFBundleAlternateIcons" \
-            build/Build/Products/Release-iphoneos/PocketAI.app/Info.plist | grep -c "AppIcon-"
+            build/Build/Products/Release-iphoneos/PocketAI.app/Info.plist | grep -c "AppIconV2-"
 
       - name: Package the .ipa
         run: |
