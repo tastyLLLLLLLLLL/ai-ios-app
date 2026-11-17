@@ -25,11 +25,33 @@ struct SettingsView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
+                    // MARK: Оформление
                     themeSection
 
-                    SettingsSection(
-                        footer: "Модель перестаёт отказываться отвечать и не добавляет предупреждений. Для этого используется версия той же модели со снятыми ограничениями — она скачивается один раз. За то, как использовать ответы, отвечаете вы."
-                    ) {
+                    // MARK: Производительность
+                    SettingsSection(header: "Производительность") {
+                        Toggle(isOn: $model.settings.lightMode) {
+                            SettingsLabel(title: "Лёгкий режим", icon: "hare.fill", bounce: model.settings.lightMode)
+                        }
+                        SettingsNote("Простые карточки и фон без стекла, размытия и теней. Приложение работает быстрее и реже закрывается из-за нехватки памяти.")
+                        Divider()
+                        Toggle(isOn: $model.settings.animationsOff) {
+                            SettingsLabel(title: "Без анимаций", icon: "figure.stand", bounce: model.settings.animationsOff)
+                        }
+                        SettingsNote("Экраны и сообщения появляются сразу, без движения.")
+                        Divider()
+                        Toggle(isOn: $model.settings.pauseMotionWhileAnswering) {
+                            SettingsLabel(
+                                title: "Замирать во время ответа",
+                                icon: model.settings.pauseMotionWhileAnswering ? "pause.circle.fill" : "play.circle.fill",
+                                bounce: model.settings.pauseMotionWhileAnswering
+                            )
+                        }
+                        SettingsNote("Пока нейросеть пишет ответ, фон не двигается, и графический чип занят только ей.")
+                    }
+
+                    // MARK: Нейросеть
+                    SettingsSection(header: "Нейросеть") {
                         Toggle(isOn: $model.settings.uncensored) {
                             SettingsLabel(
                                 title: "Без цензуры",
@@ -37,48 +59,17 @@ struct SettingsView: View {
                                 bounce: model.settings.uncensored
                             )
                         }
+                        SettingsNote("Модель не отказывается отвечать и не добавляет предупреждений. Используется версия модели со снятыми ограничениями — она скачивается один раз. За то, как использовать ответы, отвечаете вы.")
                         if model.settings.uncensored {
                             uncensoredStatus
                                 .transition(.opacity.combined(with: .move(edge: .top)))
                         }
-                    }
-
-                    SettingsSection(
-                        footer: "Придёт уведомление, когда скачается модель. Если свернуть приложение во время ответа, iPhone ставит нейросеть на паузу — придёт напоминание, а когда вернётесь, ответ допишется сам. Пока идёт ответ, экран не гаснет."
-                    ) {
-                        Toggle(isOn: $model.settings.notificationsEnabled) {
-                            SettingsLabel(
-                                title: "Уведомления",
-                                icon: model.settings.notificationsEnabled ? "bell.badge.fill" : "bell.fill",
-                                bounce: model.settings.notificationsEnabled
-                            )
-                        }
-                    }
-
-                    SettingsSection(
-                        footer: BackgroundAnswer.isSupported
-                            ? "Эксперимент. Если свернуть приложение во время ответа, модель перезагрузится на процессор и продолжит писать — медленнее, зато в фоне. Прогресс виден на экране блокировки, по окончании придёт уведомление. iOS может остановить работу в фоне в любой момент — тогда ответ встанет на паузу и допишется, когда вы вернётесь."
-                            : "Работа в фоне доступна начиная с iOS 26."
-                    ) {
-                        Toggle(isOn: $model.settings.backgroundAnswers) {
-                            SettingsLabel(
-                                title: "Дописывать в фоне",
-                                icon: "moon.stars.fill",
-                                bounce: model.settings.backgroundAnswers
-                            )
-                        }
-                        .disabled(!BackgroundAnswer.isSupported)
-                    }
-
-                    SettingsSection(
-                        footer: "Модель сначала обдумывает задачу, потом отвечает. Ответы точнее, но приходят медленнее. Работает с моделями Qwen3."
-                    ) {
+                        Divider()
                         Toggle(isOn: $model.settings.thinkingEnabled) {
                             SettingsLabel(title: "Режим размышлений", icon: "brain", bounce: model.settings.thinkingEnabled)
                         }
-                    }
-
-                    SettingsSection(footer: "Ниже — ответы точнее и предсказуемее, выше — разнообразнее.") {
+                        SettingsNote("Модель сначала обдумывает задачу, потом отвечает. Точнее, но медленнее. Работает с моделями Qwen3.")
+                        Divider()
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
                                 SettingsLabel(title: "Креативность", icon: "wand.and.stars", bounce: false)
@@ -91,11 +82,8 @@ struct SettingsView: View {
                             }
                             Slider(value: $model.settings.temperature, in: 0...1.5, step: 0.1)
                         }
-                    }
-
-                    SettingsSection(
-                        footer: "Чем больше память разговора, тем дольше модель помнит начало чата, но тем больше оперативной памяти ей нужно. Если приложение закрывается само — выберите вариант поменьше."
-                    ) {
+                        SettingsNote("Ниже — ответы точнее и предсказуемее, выше — разнообразнее.")
+                        Divider()
                         HStack {
                             SettingsLabel(title: "Память разговора", icon: "memorychip", bounce: false)
                             Spacer()
@@ -107,7 +95,6 @@ struct SettingsView: View {
                             .pickerStyle(.menu)
                             .labelsHidden()
                         }
-                        Divider()
                         HStack {
                             SettingsLabel(title: "Длина ответа", icon: "text.alignleft", bounce: false)
                             Spacer()
@@ -120,8 +107,10 @@ struct SettingsView: View {
                             .pickerStyle(.menu)
                             .labelsHidden()
                         }
+                        SettingsNote("Чем больше память разговора, тем дольше модель помнит начало чата, но тем больше оперативной памяти ей нужно. Если приложение закрывается само — выберите вариант поменьше.")
                     }
 
+                    // MARK: Инструкции
                     SettingsSection(
                         header: "Инструкции для модели",
                         footer: "Опишите, как модель должна себя вести: стиль, язык, роль."
@@ -141,17 +130,38 @@ struct SettingsView: View {
                         .buttonStyle(PressableStyle())
                     }
 
-                    Button {
-                        confirmDeleteChats = true
-                    } label: {
-                        Label("Удалить все чаты", systemImage: "trash")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(.red)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 15)
-                            .glassCard(cornerRadius: 20)
+                    // MARK: Уведомления и фон
+                    SettingsSection(header: "Уведомления и работа в фоне") {
+                        Toggle(isOn: $model.settings.notificationsEnabled) {
+                            SettingsLabel(
+                                title: "Уведомления",
+                                icon: model.settings.notificationsEnabled ? "bell.badge.fill" : "bell.fill",
+                                bounce: model.settings.notificationsEnabled
+                            )
+                        }
+                        SettingsNote("Придёт уведомление, когда скачается модель или закончится ответ. Пока идёт ответ, экран не гаснет.")
+                        Divider()
+                        Toggle(isOn: $model.settings.backgroundAnswers) {
+                            SettingsLabel(title: "Дописывать в фоне", icon: "moon.stars.fill", bounce: model.settings.backgroundAnswers)
+                        }
+                        .disabled(!BackgroundAnswer.isSupported)
+                        SettingsNote(BackgroundAnswer.isSupported
+                            ? "Эксперимент. Если свернуть приложение во время ответа, модель продолжит писать на процессоре — медленнее, зато в фоне. Прогресс виден на экране блокировки. Без этого ответ встаёт на паузу и дописывается, когда вы вернётесь."
+                            : "Работа в фоне доступна начиная с iOS 26.")
                     }
-                    .buttonStyle(PressableStyle(scale: 0.97))
+
+                    // MARK: Данные
+                    SettingsSection(header: "Данные") {
+                        Button {
+                            confirmDeleteChats = true
+                        } label: {
+                            Label("Удалить все чаты", systemImage: "trash")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(.red)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(PressableStyle(scale: 0.97))
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
@@ -178,6 +188,7 @@ struct SettingsView: View {
             }
             .onChange(of: model.settings) { old, new in
                 new.save()
+                withAnimation(.easeInOut(duration: 0.3)) { new.applyDisplay() }
                 // Turning the switch on starts the download right away, so it cannot be missed.
                 if new.uncensored, !old.uncensored, uncensoredState == .notDownloaded {
                     model.models.downloadUncensoredVariant()
@@ -210,10 +221,7 @@ struct SettingsView: View {
 
     private var themeSection: some View {
         let theme = ThemeStore.shared
-        return SettingsSection(
-            header: "Темы",
-            footer: "«Замирать во время ответа» останавливает движение фона, пока нейросеть пишет ответ, чтобы графический чип был занят только ей."
-        ) {
+        return SettingsSection(header: "Оформление") {
             Picker("Режим", selection: Binding(
                 get: { theme.appearance },
                 set: { theme.setAppearance($0) }
@@ -299,18 +307,6 @@ struct SettingsView: View {
                 .padding(.horizontal, 2)
             }
 
-            Divider()
-
-            Toggle(isOn: Binding(
-                get: { model.settings.pauseMotionWhileAnswering },
-                set: { model.settings.pauseMotionWhileAnswering = $0 }
-            )) {
-                SettingsLabel(
-                    title: "Замирать во время ответа",
-                    icon: model.settings.pauseMotionWhileAnswering ? "pause.circle.fill" : "play.circle.fill",
-                    bounce: model.settings.pauseMotionWhileAnswering
-                )
-            }
         }
     }
 
@@ -421,5 +417,21 @@ private struct SettingsLabel: View {
                 .background(Theme.accent, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             Text(title)
         }
+    }
+}
+
+/// Small explanation under a setting.
+private struct SettingsNote: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }

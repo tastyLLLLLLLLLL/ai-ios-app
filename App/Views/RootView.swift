@@ -18,9 +18,8 @@ struct RootView: View {
             let progress = showChats ? max(0, 1 + drawerDrag / drawerWidth) : 0
 
             ZStack(alignment: .leading) {
-                // Only a cheap offset: scaling and masking the whole screen made the panel stutter.
                 mainScreen
-                    .offset(x: drawerWidth * 0.12 * progress)
+                    .modifier(DrawerPush(progress: progress, width: drawerWidth, light: MotionStore.shared.lightMode))
                     .allowsHitTesting(!showChats)
 
                 // Dimmed main screen; a tap or a swipe to the left closes the panel.
@@ -43,11 +42,14 @@ struct RootView: View {
         }
         .background(AuroraBackground())
         .tint(Theme.tint)
+        .respectsAnimationSetting()
         .sheet(isPresented: $showModels) {
             ModelsView()
+                .respectsAnimationSetting()
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
+                .respectsAnimationSetting()
         }
         .animation(.easeInOut(duration: 0.5), value: ThemeStore.shared.palette.id)
         .onAppear {
@@ -272,7 +274,7 @@ struct ChatDrawer: View {
                                 .padding(.top, sectionIndex == 0 ? 0 : 14)
                                 .padding(.leading, 6)
 
-                            ForEach(section.chats) { chat in
+                            ForEach(Array(section.chats.enumerated()), id: \.element.id) { index, chat in
                                 ChatRowCard(
                                     chat: chat,
                                     isCurrent: chat.id == model.currentID,
@@ -282,6 +284,11 @@ struct ChatDrawer: View {
                                     },
                                     onDelete: { chatToDelete = chat }
                                 )
+                                .modifier(StaggerIn(
+                                    appeared: appeared,
+                                    delay: 0.05 + Double(min(index + sectionIndex, 8)) * 0.035,
+                                    enabled: !MotionStore.shared.lightMode
+                                ))
                                 .transition(.asymmetric(
                                     insertion: .opacity,
                                     removal: .scale(scale: 0.9).combined(with: .opacity)
@@ -291,9 +298,7 @@ struct ChatDrawer: View {
                     }
                     .padding(.horizontal, 14)
                     .padding(.bottom, 24)
-                    .opacity(appeared ? 1 : 0)
-                    .offset(x: appeared ? 0 : -16)
-                    .animation(.easeOut(duration: 0.25).delay(0.05), value: appeared)
+                    .modifier(StaggerIn(appeared: appeared, delay: 0.05, enabled: MotionStore.shared.lightMode))
                     .animation(.smooth, value: model.sortedConversations.map(\.id))
                 }
                 .scrollIndicators(.hidden)
@@ -382,7 +387,8 @@ struct ChatDrawer: View {
     }
 }
 
-/// Background of the chat panel: an opaque tinted surface, cheap to draw while it slides.
+/// Background of the chat panel. Full design: frosted panel with a soft shadow.
+/// Light mode: an opaque tinted surface that is cheap to draw while it slides.
 private struct DrawerBackground: View {
     @Environment(\.colorScheme) private var colorScheme
 
@@ -390,21 +396,75 @@ private struct DrawerBackground: View {
         let shape = UnevenRoundedRectangle(
             topLeadingRadius: 0,
             bottomLeadingRadius: 0,
-            bottomTrailingRadius: 32,
-            topTrailingRadius: 32,
+            bottomTrailingRadius: 36,
+            topTrailingRadius: 36,
             style: .continuous
         )
-        let base = colorScheme == .dark ? Color(red: 0.07, green: 0.07, blue: 0.11) : Color(red: 0.97, green: 0.97, blue: 0.99)
-        ZStack {
-            shape.fill(base)
-            shape.fill(
-                LinearGradient(
-                    colors: [Theme.primary.opacity(colorScheme == .dark ? 0.20 : 0.10), .clear],
-                    startPoint: .topLeading,
-                    endPoint: .center
+        let dark = colorScheme == .dark
+        if MotionStore.shared.lightMode {
+            ZStack {
+                shape.fill(dark ? Color(red: 0.07, green: 0.07, blue: 0.11) : Color(red: 0.97, green: 0.97, blue: 0.99))
+                shape.fill(
+                    LinearGradient(
+                        colors: [Theme.primary.opacity(dark ? 0.20 : 0.10), .clear],
+                        startPoint: .topLeading,
+                        endPoint: .center
+                    )
                 )
-            )
-            shape.stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                shape.stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            }
+        } else {
+            ZStack {
+                shape.fill(.regularMaterial)
+                shape.fill(
+                    LinearGradient(
+                        colors: [Theme.primary.opacity(dark ? 0.22 : 0.12), .clear],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                shape.stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.25), radius: 24, x: 8)
+        }
+    }
+}
+
+/// How the main screen moves aside for the chat panel.
+private struct DrawerPush: ViewModifier {
+    let progress: CGFloat
+    let width: CGFloat
+    let light: Bool
+
+    func body(content: Content) -> some View {
+        if light {
+            content.offset(x: width * 0.12 * progress)
+        } else {
+            content
+                .scaleEffect(1 - 0.06 * progress, anchor: .trailing)
+                .offset(x: width * 0.18 * progress)
+                .mask {
+                    RoundedRectangle(cornerRadius: 44 * progress, style: .continuous)
+                        .ignoresSafeArea()
+                }
+        }
+    }
+}
+
+/// Slides a view in from the left once the panel has appeared.
+private struct StaggerIn: ViewModifier {
+    let appeared: Bool
+    let delay: Double
+    let enabled: Bool
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .opacity(appeared ? 1 : 0)
+                .offset(x: appeared ? 0 : -24)
+                .animation(.spring(response: 0.45, dampingFraction: 0.82).delay(delay), value: appeared)
+        } else {
+            content
         }
     }
 }
@@ -463,10 +523,7 @@ private struct ChatRowCard: View {
             .accessibilityLabel("Удалить чат")
         }
         .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color.primary.opacity(isCurrent ? 0.08 : 0.05))
-        )
+        .glassCard(cornerRadius: 20)
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .strokeBorder(Theme.tint, lineWidth: 1.5)

@@ -51,6 +51,7 @@ final class AppModel {
         models.onDownloadFinished = { [weak self] fileName, error in
             self?.notifyDownload(fileName: fileName, error: error)
         }
+        settings.applyDisplay()
         BackgroundAnswer.shared.onExpire = { [weak self] in
             self?.backgroundTimeExpired()
         }

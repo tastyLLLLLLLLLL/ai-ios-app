@@ -140,7 +140,10 @@ enum Motion {
     static let ambient = !UserDefaults.standard.bool(forKey: "demoStill")
 
     /// True while the drifting background and the rotating logo should move.
-    static var isRunning: Bool { ambient && !MotionStore.shared.paused }
+    static var isRunning: Bool {
+        let store = MotionStore.shared
+        return ambient && !store.paused && !store.animationsOff && !store.lightMode
+    }
 }
 
 /// Lets the app freeze ambient motion while the model is answering, so the graphics chip is free for it.
@@ -148,6 +151,10 @@ enum Motion {
 final class MotionStore {
     static let shared = MotionStore()
     var paused = false
+    /// "Лёгкий режим": plain cards and backgrounds instead of glass, blur and shadows.
+    var lightMode = false
+    /// "Без анимаций": every transition happens instantly.
+    var animationsOff = false
 
     private init() {}
 }
@@ -248,15 +255,31 @@ struct GlassBackground<S: Shape>: ViewModifier {
     var blurred = false
 
     func body(content: Content) -> some View {
-        #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
-            content.glassEffect(glass, in: shape)
+        if MotionStore.shared.lightMode {
+            plain(content)
         } else {
+            #if compiler(>=6.2)
+            if #available(iOS 26.0, *) {
+                content.glassEffect(glass, in: shape)
+            } else {
+                fallback(content)
+            }
+            #else
             fallback(content)
+            #endif
         }
-        #else
-        fallback(content)
-        #endif
+    }
+
+    /// Light mode: a flat translucent fill, no glass and no blur.
+    @ViewBuilder
+    private func plain(_ content: Content) -> some View {
+        if let tint {
+            content.background(shape.fill(tint))
+        } else {
+            content
+                .background(shape.fill(colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.7)))
+                .overlay(shape.stroke(Color.primary.opacity(0.08), lineWidth: 1))
+        }
     }
 
     #if compiler(>=6.2)
@@ -399,5 +422,17 @@ struct PressableStyle: ButtonStyle {
             .scaleEffect(configuration.isPressed ? scale : 1)
             .opacity(configuration.isPressed ? 0.85 : 1)
             .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+}
+
+extension View {
+    /// Turns off every animation below this view when "Без анимаций" is on.
+    func respectsAnimationSetting() -> some View {
+        transaction { transaction in
+            if MotionStore.shared.animationsOff {
+                transaction.animation = nil
+                transaction.disablesAnimations = true
+            }
+        }
     }
 }

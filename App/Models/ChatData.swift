@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 struct ChatMessage: Identifiable, Codable, Equatable {
     enum Role: String, Codable {
@@ -99,6 +100,10 @@ struct AppSettings: Codable, Equatable {
     var notificationsEnabled = false
     /// Experimental: keep writing on the processor after the app is minimised (iOS 26).
     var backgroundAnswers = false
+    /// Plain cards and backgrounds instead of glass, blur and shadows.
+    var lightMode = false
+    /// No animations anywhere.
+    var animationsOff = false
 
     init() {}
 
@@ -114,6 +119,15 @@ struct AppSettings: Codable, Equatable {
         pauseMotionWhileAnswering = try values.decodeIfPresent(Bool.self, forKey: .pauseMotionWhileAnswering) ?? true
         notificationsEnabled = try values.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? false
         backgroundAnswers = try values.decodeIfPresent(Bool.self, forKey: .backgroundAnswers) ?? false
+        lightMode = try values.decodeIfPresent(Bool.self, forKey: .lightMode) ?? false
+        animationsOff = try values.decodeIfPresent(Bool.self, forKey: .animationsOff) ?? false
+    }
+
+    /// Pushes the display switches to the views.
+    @MainActor
+    func applyDisplay() {
+        MotionStore.shared.lightMode = lightMode
+        MotionStore.shared.animationsOff = animationsOff
     }
 
     static func load() -> AppSettings {
