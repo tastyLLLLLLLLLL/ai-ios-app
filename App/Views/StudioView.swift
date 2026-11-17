@@ -74,6 +74,7 @@ struct StudioView: View {
                 .padding(16)
             }
             .scrollDismissesKeyboard(.interactively)
+            .dismissesKeyboardOnTap()
             .background(ScreenBackground())
             .navigationTitle("Студия")
             .navigationBarTitleDisplayMode(.inline)
@@ -214,7 +215,7 @@ struct StudioView: View {
     private var buttonTitle: String {
         switch kind {
         case .image: return "Нарисовать"
-        case .video: return "Снять видео"
+        case .video: return "Создать видео"
         case .music: return "Сочинить музыку"
         }
     }
@@ -289,8 +290,8 @@ private struct JobCard: View {
     @State private var image: UIImage?
     @State private var loadError: String?
     @State private var confirmDelete = false
-    @State private var player: AVPlayer?
-    @State private var playing = false
+    @State private var playback: MediaPlayback?
+    @State private var fullScreen = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -338,12 +339,15 @@ private struct JobCard: View {
         }
         .confirmationDialog("Удалить эту работу?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Удалить", role: .destructive) {
-                player?.pause()
+                playback?.pause()
                 Task { await model.server.deleteJob(job) }
             }
             Button("Отмена", role: .cancel) {}
         }
-        .onDisappear { player?.pause() }
+        .onDisappear { playback?.pause() }
+        .fullScreenCover(isPresented: $fullScreen, onDismiss: { playback?.syncState() }) {
+            if let playback { FullScreenVideo(playback: playback) }
+        }
     }
 
     @ViewBuilder
@@ -385,21 +389,32 @@ private struct JobCard: View {
                             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
                 case "video":
-                    VideoPlayer(player: player)
-                        .aspectRatio(16 / 9, contentMode: .fit)
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                default:
-                    Button {
-                        togglePlay()
-                    } label: {
-                        Label(playing ? "Пауза" : "Слушать", systemImage: playing ? "pause.fill" : "play.fill")
-                            .font(.headline)
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 22)
-                            .padding(.vertical, 12)
-                            .accentButtonLabel(Capsule())
+                    if let playback {
+                        VideoSurface(player: playback.player)
+                            .aspectRatio(playback.aspectRatio ?? 16 / 9, contentMode: .fit)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay {
+                                if !playback.isPlaying {
+                                    Image(systemName: "play.fill")
+                                        .font(.title)
+                                        .foregroundStyle(.white)
+                                        .frame(width: 64, height: 64)
+                                        .background(.black.opacity(0.45), in: Circle())
+                                        .allowsHitTesting(false)
+                                        .transition(.opacity)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture { withAnimation(.easeInOut(duration: 0.2)) { playback.toggle() } }
+                        MediaControls(playback: playback, onFullScreen: {
+                            playback.pause()
+                            fullScreen = true
+                        })
                     }
-                    .liquidButton(prominent: true, shape: .capsule)
+                default:
+                    if let playback {
+                        MediaControls(playback: playback)
+                    }
                 }
 
                 ShareLink(item: fileURL) {
@@ -426,25 +441,11 @@ private struct JobCard: View {
             if job.kind == "image" {
                 image = await Task.detached { UIImage(contentsOfFile: url.path)?.preparingForDisplay() }.value
             } else {
-                player = AVPlayer(url: url)
+                playback = MediaPlayback(url: url)
             }
             withAnimation(.smooth) { fileURL = url }
         } catch {
             loadError = error.localizedDescription
         }
-    }
-
-    private func togglePlay() {
-        guard let player else { return }
-        if playing {
-            player.pause()
-        } else {
-            try? AVAudioSession.sharedInstance().setCategory(.playback)
-            if player.currentItem?.currentTime() == player.currentItem?.duration {
-                player.seek(to: .zero)
-            }
-            player.play()
-        }
-        playing.toggle()
     }
 }

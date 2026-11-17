@@ -678,17 +678,63 @@ async def list_jobs(request):
     return web.json_response([public_job(j) for j in ordered])
 
 
+def remove_outputs(job):
+    """Deletes a job's finished files from the server disk."""
+    base = (COMFY_DIR / "output").resolve()
+    for item in job.get("outputs", []):
+        try:
+            path = (base / item.get("subfolder", "") / item["filename"]).resolve()
+            if base in path.parents and path.is_file():
+                path.unlink()
+        except Exception as error:
+            print(f"Could not delete a file: {error}", flush=True)
+
+
+async def cancel_in_comfy(prompt_ids):
+    if not prompt_ids:
+        return
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=10)) as session:
+            await session.post(f"{COMFY}/queue", json={"delete": prompt_ids})
+            await session.post(f"{COMFY}/interrupt")
+    except Exception:
+        pass
+
+
 async def delete_job(request):
     job = jobs.pop(request.match_info["job_id"], None)
-    if job and job["status"] in ("queued", "running"):
-        try:
-            async with ClientSession(timeout=ClientTimeout(total=10)) as session:
-                await session.post(f"{COMFY}/queue", json={"delete": [job.get("prompt_id")]})
-                await session.post(f"{COMFY}/interrupt")
-        except Exception:
-            pass
+    if job:
+        if job["status"] in ("queued", "running"):
+            await cancel_in_comfy([job.get("prompt_id")])
+        remove_outputs(job)
     save_jobs()
     return web.json_response({"ok": True})
+
+
+async def delete_all_jobs(request):
+    """Removes every picture, video and track from the server to free disk space."""
+    active = [j.get("prompt_id") for j in jobs.values() if j["status"] in ("queued", "running")]
+    await cancel_in_comfy([p for p in active if p])
+    jobs.clear()
+    prompt_to_job.clear()
+    save_jobs()
+    freed = 0
+    for folder in ("output", "input"):
+        base = COMFY_DIR / folder
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*"):
+            # ComfyUI keeps a few example files in input; only generated media goes.
+            if path.is_file() and path.suffix.lower() in MEDIA_SUFFIXES and (folder == "output" or path.name.startswith("pocketai")):
+                try:
+                    freed += path.stat().st_size
+                    path.unlink()
+                except Exception as error:
+                    print(f"Could not delete {path}: {error}", flush=True)
+    return web.json_response({"ok": True, "freedBytes": freed})
+
+
+MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".mov", ".mp3", ".flac", ".wav", ".ogg", ".m4a"}
 
 
 async def job_file(request):
@@ -750,6 +796,7 @@ def main():
     app.router.add_post("/api/chat", chat)
     app.router.add_get("/api/jobs", list_jobs)
     app.router.add_post("/api/jobs", create_job)
+    app.router.add_delete("/api/jobs", delete_all_jobs)
     app.router.add_delete("/api/jobs/{job_id}", delete_job)
     app.router.add_get("/api/jobs/{job_id}/files/{index}", job_file)
     app.router.add_get("/api/settings", get_settings)

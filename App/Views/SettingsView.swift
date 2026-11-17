@@ -6,6 +6,9 @@ struct SettingsView: View {
     @State private var confirmDeleteChats = false
     @State private var appeared = false
     @State private var notificationsDenied = false
+    @State private var confirmClearServer = false
+    @State private var clearingServer = false
+    @State private var clearServerNote: String?
 
     private var uncensoredState: UncensoredState { model.models.uncensoredState }
 
@@ -161,6 +164,36 @@ struct SettingsView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .buttonStyle(PressableStyle(scale: 0.97))
+                        // Attached to the button so the menu opens right next to it.
+                        .confirmationDialog("Удалить все чаты без возможности восстановить?", isPresented: $confirmDeleteChats, titleVisibility: .visible) {
+                            Button("Удалить все", role: .destructive) { model.deleteAllChats() }
+                            Button("Отмена", role: .cancel) {}
+                        }
+
+                        if model.server.isConfigured {
+                            Divider()
+                            Button {
+                                confirmClearServer = true
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Label("Очистить файлы на сервере", systemImage: "externaldrive.badge.xmark")
+                                        .font(.body.weight(.semibold))
+                                        .foregroundStyle(.red)
+                                    Spacer()
+                                    if clearingServer { ProgressView() }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(PressableStyle(scale: 0.97))
+                            .disabled(clearingServer)
+                            .confirmationDialog("Удалить все картинки, видео и музыку с сервера?", isPresented: $confirmClearServer, titleVisibility: .visible) {
+                                Button("Удалить всё", role: .destructive) { clearServer() }
+                                Button("Отмена", role: .cancel) {}
+                            } message: {
+                                Text("Работы пропадут и из Студии. Модели и чаты останутся.")
+                            }
+                            SettingsNote(clearServerNote ?? "Освобождает место на диске сервера. Если сервер выключен, он включится для этого.")
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -171,6 +204,7 @@ struct SettingsView: View {
                 .animation(.easeOut(duration: 0.25), value: appeared)
             }
             .scrollDismissesKeyboard(.interactively)
+            .dismissesKeyboardOnTap()
             .background(ScreenBackground())
             .tint(Theme.tint)
             .onAppear { appeared = true }
@@ -212,10 +246,23 @@ struct SettingsView: View {
             } message: {
                 Text("Разрешите уведомления для Pocket AI в настройках iPhone.")
             }
-            .confirmationDialog("Удалить все чаты без возможности восстановить?", isPresented: $confirmDeleteChats, titleVisibility: .visible) {
-                Button("Удалить все", role: .destructive) { model.deleteAllChats() }
-                Button("Отмена", role: .cancel) {}
+        }
+    }
+
+    private func clearServer() {
+        clearingServer = true
+        clearServerNote = nil
+        Task {
+            do {
+                try await model.server.ensureRunning()
+                let freed = try await model.server.deleteAllJobs()
+                let size = ByteCountFormatter.string(fromByteCount: freed, countStyle: .file)
+                clearServerNote = freed > 0 ? "Готово: освобождено \(size)." : "Готово: на сервере не было файлов."
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            } catch {
+                clearServerNote = "Не получилось: \(error.localizedDescription)"
             }
+            clearingServer = false
         }
     }
 

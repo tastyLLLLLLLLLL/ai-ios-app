@@ -568,6 +568,21 @@ final class ServerStore {
         }
     }
 
+    /// Deletes every picture, video and track on the server and on the phone.
+    /// Returns how many bytes were freed on the server.
+    func deleteAllJobs() async throws -> Int64 {
+        let data = try await sendRaw("/api/jobs", method: "DELETE", body: nil)
+        let all = jobs
+        jobs.removeAll()
+        for job in all {
+            for index in job.outputs.indices {
+                try? FileManager.default.removeItem(at: localURL(for: job, index: index))
+            }
+        }
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return (json?["freedBytes"] as? NSNumber)?.int64Value ?? 0
+    }
+
     func refreshJobs() async {
         guard isConfigured, let fresh: [ServerJob] = try? await get("/api/jobs") else { return }
         let previous = Dictionary(uniqueKeysWithValues: jobs.map { ($0.id, $0) })
@@ -654,6 +669,9 @@ final class ServerStore {
     private static func check(_ response: URLResponse, data: Data? = nil) throws {
         guard let http = response as? HTTPURLResponse else { return }
         if http.statusCode == 401 { throw ServerError.wrongPassword }
+        if http.statusCode == 405 {
+            throw ServerError.message("На сервере старая версия. Запустите на нём установку ещё раз, чтобы обновить.")
+        }
         guard (200..<300).contains(http.statusCode) else {
             if let data, let error = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
                 throw ServerError.message(error.error)

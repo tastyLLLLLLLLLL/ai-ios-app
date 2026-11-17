@@ -102,6 +102,7 @@ struct ModelsView: View {
                 .transition(.opacity.combined(with: .move(edge: .leading)))
                 }
             }
+            .dismissesKeyboardOnTap()
             .background(ScreenBackground())
             .navigationTitle("Модели")
             .navigationBarTitleDisplayMode(.inline)
