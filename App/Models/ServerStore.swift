@@ -91,6 +91,7 @@ enum ServerError: LocalizedError {
     case badAddress
     case wrongPassword
     case unreachable
+    case slow
     case message(String)
 
     var errorDescription: String? {
@@ -99,6 +100,7 @@ enum ServerError: LocalizedError {
         case .badAddress: return "Неправильный адрес сервера. Он должен начинаться с https://"
         case .wrongPassword: return "Неверный пароль."
         case .unreachable: return "Сервер выключен или не отвечает. Включите его кнопкой в разделе Модели → Онлайн (или на RunPod)."
+        case .slow: return "Сервер долго не отвечает — скорее всего, загружает модель. Попробуйте ещё раз через минуту."
         case .message(let text): return text
         }
     }
@@ -146,6 +148,9 @@ final class ServerStore {
     private(set) var idleMinutes = 10
     /// RunPod account key, needed only to switch a stopped server on. Kept in the keychain.
     private(set) var hasRunPodKey = false
+
+    /// True while the server is loading a model into its graphics card before answering.
+    private(set) var modelLoading = false
 
     /// Called when a job finishes or fails: (job, finished successfully).
     var onJobFinished: ((ServerJob, Bool) -> Void)?
@@ -389,12 +394,18 @@ final class ServerStore {
                     guard let request else { throw ServerError.notConfigured }
                     let (bytes, response) = try await URLSession.shared.bytes(for: request)
                     try Self.check(response)
+                    defer { self.modelLoading = false }
                     for try await line in bytes.lines {
                         guard let data = line.data(using: .utf8),
                               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
                         if let error = object["error"] as? String {
                             throw ServerError.message(error)
                         }
+                        if object["status"] as? String == "loading" {
+                            self.modelLoading = true
+                            continue
+                        }
+                        self.modelLoading = false
                         let message = object["message"] as? [String: Any]
                         let chunk = ChatChunk(
                             thinking: message?["thinking"] as? String ?? "",
@@ -533,8 +544,11 @@ final class ServerStore {
     private static func friendly(_ error: Error) -> Error {
         if error is ServerError { return error }
         if (error as NSError).domain == NSURLErrorDomain {
-            if (error as NSError).code == NSURLErrorCancelled { return CancellationError() }
-            return ServerError.unreachable
+            switch (error as NSError).code {
+            case NSURLErrorCancelled: return CancellationError()
+            case NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost: return ServerError.slow
+            default: return ServerError.unreachable
+            }
         }
         return error
     }

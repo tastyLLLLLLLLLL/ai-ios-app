@@ -74,6 +74,7 @@ if [ ! -x "$ROOT/ollama/bin/ollama" ]; then
 fi
 bash "$ROOT/start.sh" ollama
 
+pull qwen3:4b
 pull gpt-oss:20b
 pull qwen3.6:27b qwen3:32b
 pull qwen3-coder:30b

@@ -117,6 +117,16 @@ struct ChatView: View {
             .padding(.vertical, 8)
             .glassCard(cornerRadius: 18, blurred: true)
             .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else if model.server.modelLoading, model.isGenerating {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Модель загружается на сервере… до 1–2 минут")
+                    .font(.footnote.weight(.medium))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .glassCard(cornerRadius: 18, blurred: true)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
         } else if model.engineState == .loading {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)

@@ -50,6 +50,8 @@ TEXT_MODELS = [
      "summary": "Подробно рассуждает перед ответом, сильна в логике и математике."},
     {"match": "hf.co/mlabonne/gemma-3-27b-it-abliterated", "name": "Gemma 3 27B без цензуры", "category": "text",
      "summary": "Та же Gemma 3 со снятыми ограничениями: не отказывается отвечать.", "uncensored": True},
+    {"match": "qwen3:4b", "name": "Qwen3 4B (быстрая)", "category": "text",
+     "summary": "Маленькая и очень быстрая модель для простых вопросов. Ещё сервер переводит ей описания для картинок."},
     {"match": "qwen3-coder", "name": "Qwen3-Coder 30B", "category": "code",
      "summary": "Специально для программирования, быстрая."},
 ]
@@ -383,7 +385,8 @@ async def watch_idle(app):
 # Prompt translation: image, video and music models understand English best
 # ---------------------------------------------------------------------------
 
-TRANSLATORS = ["gemma4", "gemma3:27b", "qwen3.6", "qwen3:32b", "gpt-oss"]
+# The small model loads in seconds; the big ones are only a fallback.
+TRANSLATORS = ["qwen3:4b", "gemma4", "gemma3:27b", "qwen3.6", "qwen3:32b", "gpt-oss"]
 
 
 def has_cyrillic(text):
@@ -504,8 +507,29 @@ async def stream_chat(request):
 
     response = web.StreamResponse(headers={"Content-Type": "application/x-ndjson", "Cache-Control": "no-cache"})
     await response.prepare(request)
+
+    lock = asyncio.Lock()
+    last_write = time.time()
+
+    async def write(data):
+        nonlocal last_write
+        async with lock:
+            await response.write(data)
+            last_write = time.time()
+
+    async def heartbeat():
+        # RunPod's proxy drops a connection that stays silent for long; a model can take
+        # a minute or two to load, so an empty line is sent every few seconds meanwhile.
+        while True:
+            await asyncio.sleep(5)
+            if time.time() - last_write >= 5:
+                await write(b"\n")
+
+    if not await model_loaded(payload["model"]):
+        await write((json.dumps({"status": "loading"}) + "\n").encode())
+    beat = asyncio.create_task(heartbeat())
     try:
-        async with ClientSession(timeout=ClientTimeout(total=None, sock_read=600)) as session:
+        async with ClientSession(timeout=ClientTimeout(total=None, sock_read=900)) as session:
             async with session.post(f"{OLLAMA}/api/chat", json=payload) as upstream:
                 if upstream.status != 200:
                     text = await upstream.text()
@@ -514,61 +538,42 @@ async def stream_chat(request):
                         payload.pop("think")
                         async with session.post(f"{OLLAMA}/api/chat", json=payload) as retry:
                             async for line in retry.content:
-                                await response.write(line)
+                                await write(line)
                     else:
-                        await response.write((json.dumps({"error": text[:500]}) + "\n").encode())
+                        await write((json.dumps({"error": text[:500]}) + "\n").encode())
                 else:
                     async for line in upstream.content:
-                        await response.write(line)
+                        await write(line)
     except (ConnectionResetError, asyncio.CancelledError):
         raise
     except Exception as error:
-        await response.write((json.dumps({"error": str(error)[:300]}) + "\n").encode())
+        await write((json.dumps({"error": str(error)[:300]}) + "\n").encode())
+    finally:
+        beat.cancel()
     await response.write_eof()
     return response
 
 
+async def model_loaded(name):
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=5)) as session:
+            async with session.get(f"{OLLAMA}/api/ps") as response:
+                return any(m.get("name") == name for m in (await response.json()).get("models", []))
+    except Exception:
+        return False
+
+
 async def create_job(request):
+    """Registers the job and answers at once; translation and ComfyUI submission run in the background."""
     body = await request.json()
     kind = body.get("kind")
     model_id = body.get("model")
     model = next((m for m in MEDIA_MODELS if m["id"] == model_id and m["kind"] == kind), None)
     if not model or not media_available(model):
         return web.json_response({"error": "Эта модель не установлена на сервере."}, status=400)
-
-    seed = int(body.get("seed") or random.randint(1, 2**31 - 1))
     prompt = (body.get("prompt") or "").strip()
     if not prompt:
         return web.json_response({"error": "Опишите, что нужно создать."}, status=400)
-    if kind == "image":
-        english = await translate(prompt, "detailed prompt for an image generation model")
-        width, height = int(body.get("width", 1024)), int(body.get("height", 1024))
-        workflow = image_workflow(model_id, english, body.get("negative") or DEFAULT_NEGATIVE, width, height, seed)
-    elif kind == "video":
-        english = await translate(prompt, "detailed prompt for a video generation model")
-        width, height = int(body.get("width", 1280)), int(body.get("height", 704))
-        workflow = video_workflow(english, body.get("negative") or DEFAULT_NEGATIVE, width, height,
-                                  int(body.get("seconds", 3)), seed)
-    else:
-        english = await translate(prompt, "comma-separated list of music style tags (genre, mood, instruments, vocals)")
-        workflow = music_workflow(english, body.get("lyrics") or "[instrumental]", int(body.get("seconds", 60)), seed)
-
-    await unload_text_models()
-    try:
-        async with ClientSession(timeout=ClientTimeout(total=30)) as session:
-            async with session.post(f"{COMFY}/prompt", json={"prompt": workflow, "client_id": CLIENT_ID}) as response:
-                result = await response.json(content_type=None)
-                status = response.status
-    except Exception:
-        return web.json_response(
-            {"error": "ComfyUI ещё запускается или не работает. Подождите минуту и попробуйте снова."}, status=503)
-    if status != 200 or "prompt_id" not in result:
-        detail = result.get("error", {}).get("message") if isinstance(result.get("error"), dict) else None
-        errors = result.get("node_errors")
-        message = detail or "ComfyUI отклонил задачу"
-        if errors:
-            message += ": " + json.dumps(errors, ensure_ascii=False)[:400]
-        return web.json_response({"error": message}, status=502)
 
     job = {
         "id": uuid.uuid4().hex[:12],
@@ -582,12 +587,58 @@ async def create_job(request):
         "finished": None,
         "outputs": [],
         "error": None,
-        "prompt_id": result["prompt_id"],
+        "prompt_id": None,
     }
     jobs[job["id"]] = job
-    prompt_to_job[result["prompt_id"]] = job["id"]
     save_jobs()
+    asyncio.create_task(submit_job(job, body))
     return web.json_response(public_job(job))
+
+
+async def submit_job(job, body):
+    kind, model_id, prompt = job["kind"], job["model"], job["prompt"]
+    try:
+        seed = int(body.get("seed") or random.randint(1, 2**31 - 1))
+        if kind == "image":
+            english = await translate(prompt, "detailed prompt for an image generation model")
+            width, height = int(body.get("width", 1024)), int(body.get("height", 1024))
+            workflow = image_workflow(model_id, english, body.get("negative") or DEFAULT_NEGATIVE, width, height, seed)
+        elif kind == "video":
+            english = await translate(prompt, "detailed prompt for a video generation model")
+            width, height = int(body.get("width", 1280)), int(body.get("height", 704))
+            workflow = video_workflow(english, body.get("negative") or DEFAULT_NEGATIVE, width, height,
+                                      int(body.get("seconds", 3)), seed)
+        else:
+            english = await translate(prompt, "comma-separated list of music style tags (genre, mood, instruments, vocals)")
+            workflow = music_workflow(english, body.get("lyrics") or "[instrumental]", int(body.get("seconds", 60)), seed)
+
+        await unload_text_models()
+        result, status = None, 0
+        for attempt in range(12):  # ComfyUI may still be starting right after the pod boots
+            try:
+                async with ClientSession(timeout=ClientTimeout(total=60)) as session:
+                    async with session.post(f"{COMFY}/prompt", json={"prompt": workflow, "client_id": CLIENT_ID}) as response:
+                        result = await response.json(content_type=None)
+                        status = response.status
+                break
+            except Exception:
+                await asyncio.sleep(10)
+        if result is None:
+            await finish_job(job, error="ComfyUI не запустился. Выполните на сервере: bash /workspace/ai-server/start.sh")
+            return
+        if status != 200 or "prompt_id" not in result:
+            detail = result.get("error", {}).get("message") if isinstance(result.get("error"), dict) else None
+            errors = result.get("node_errors")
+            message = detail or "ComfyUI отклонил задачу"
+            if errors:
+                message += ": " + json.dumps(errors, ensure_ascii=False)[:400]
+            await finish_job(job, error=message)
+            return
+        job["prompt_id"] = result["prompt_id"]
+        prompt_to_job[result["prompt_id"]] = job["id"]
+        save_jobs()
+    except Exception as error:
+        await finish_job(job, error=f"Ошибка на сервере: {error}"[:500])
 
 
 async def list_jobs(request):
