@@ -88,6 +88,21 @@ launch -demoPrompt "Напиши на Python функцию is_palindrome(s). Т
 wait_for_reply "$before" 480
 shot 10-code 3
 
+launch -demoUncensored YES -demoScreen settings
+shot 11-settings-uncensored 6
+
+# Photo question, answered by Gemma 3 4B with its vision module.
+if [ -n "${VISION_MODEL:-}" ] && [ -f "$VISION_MODEL" ]; then
+  cp "$VISION_MODEL" "$DATA/Documents/Models/gemma-3-4b-it-Q4_K_M.gguf"
+  cp "$VISION_MODULE" "$DATA/Documents/Models/mmproj-gemma-3-4b-it.gguf"
+  before=$(mtime)
+  launch -demoModel gemma-3-4b-it-Q4_K_M.gguf -demoImage "$PWD/scripts/test-photo.jpg" \
+    -demoPrompt "Что изображено на этой картинке? Ответь двумя предложениями."
+  shot 12-photo-loading 30
+  wait_for_reply "$before" 700
+  shot 13-photo 3
+fi
+
 echo "----- crash reports -----"
 ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i pocket || echo "none"
 echo "----- app log (errors) -----"

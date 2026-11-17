@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 import UIKit
 
 enum EngineState: Equatable {
@@ -26,6 +27,8 @@ final class AppModel {
     private var loadedContextSize = 0
     private var template = ChatTemplate.chatML
     private var supportsThinking = false
+    private var loadedVisionPath: String?
+    private var canSeeImages = false
     private var generationTask: Task<Void, Never>?
 
     private static var storageURL: URL {
@@ -67,14 +70,23 @@ final class AppModel {
 
     func delete(_ id: UUID) {
         if currentID == id { newChat() }
+        if let conversation = conversations.first(where: { $0.id == id }) {
+            ImageStore.delete(conversation.messages.flatMap(\.imageNames))
+        }
         conversations.removeAll { $0.id == id }
         save()
     }
 
     func deleteAllChats() {
         newChat()
+        ImageStore.delete(conversations.flatMap { $0.messages.flatMap(\.imageNames) })
         conversations = []
         save()
+    }
+
+    /// True when the uncensored variant of the selected model is in use.
+    var isUncensoredActive: Bool {
+        settings.uncensored && models.uncensoredState == .ready
     }
 
     private func save() {
@@ -89,9 +101,14 @@ final class AppModel {
 
     // MARK: - Generation
 
-    func send(_ text: String) {
-        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !isGenerating, models.selectedFile != nil else { return }
+    func send(_ text: String, photos: [UIImage] = []) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let imageNames = photos.compactMap { ImageStore.save($0) }
+        guard !trimmed.isEmpty || !imageNames.isEmpty, !isGenerating, models.selectedFile != nil else {
+            ImageStore.delete(imageNames)
+            return
+        }
+        let text = trimmed.isEmpty ? "Что на этой фотографии?" : trimmed
 
         if current == nil {
             let conversation = Conversation()
@@ -104,8 +121,12 @@ final class AppModel {
             let firstLine = text.split(separator: "\n").first.map(String.init) ?? text
             conversations[index].title = String(firstLine.prefix(48))
         }
-        conversations[index].messages.append(ChatMessage(role: .user, text: text))
-        conversations[index].messages.append(ChatMessage(role: .assistant, text: ""))
+        var userMessage = ChatMessage(role: .user, text: text)
+        if !imageNames.isEmpty { userMessage.images = imageNames }
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            conversations[index].messages.append(userMessage)
+            conversations[index].messages.append(ChatMessage(role: .assistant, text: ""))
+        }
         conversations[index].updated = Date()
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         generate(in: conversations[index].id)
@@ -129,14 +150,14 @@ final class AppModel {
         generationTask = Task {
             do {
                 try await ensureModelLoaded()
-                let prompt = try await buildPrompt(for: conversationID)
+                let (prompt, images) = try await buildPrompt(for: conversationID)
                 let options = GenerationOptions(
                     temperature: Float(settings.temperature),
                     maxTokens: settings.maxResponseTokens
                 )
                 let started = Date()
                 var pieces = 0
-                for try await piece in engine.generate(prompt: prompt, options: options) {
+                for try await piece in engine.generate(prompt: prompt, images: images, options: options) {
                     pieces += 1
                     updateLastMessage(in: conversationID) { $0.text += piece }
                 }
@@ -167,42 +188,79 @@ final class AppModel {
     }
 
     private func ensureModelLoaded() async throws {
-        guard let file = models.selectedFile else { throw EngineError.notLoaded }
-        if loadedFile == file, loadedContextSize == settings.contextSize, engineState == .ready { return }
+        guard let file = models.activeFile(uncensored: settings.uncensored) else { throw EngineError.notLoaded }
+        let visionPath = models.visionPath
+        if loadedFile == file, loadedVisionPath == visionPath,
+           loadedContextSize == settings.contextSize, engineState == .ready {
+            return
+        }
 
-        engineState = .loading
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { engineState = .loading }
         loadedFile = nil
         do {
             let requestedContext = settings.contextSize
-            let info = try await engine.load(path: models.path(for: file), contextSize: requestedContext)
+            let info = try await engine.load(
+                path: models.path(for: file),
+                visionPath: visionPath,
+                contextSize: requestedContext
+            )
             template = ChatTemplate.detect(from: info.chatTemplate)
             supportsThinking = ChatTemplate.supportsThinking(info.chatTemplate)
+            canSeeImages = info.canSeeImages
             loadedFile = file
+            loadedVisionPath = visionPath
             loadedContextSize = requestedContext
-            engineState = .ready
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { engineState = .ready }
         } catch {
-            engineState = .failed(error.localizedDescription)
+            withAnimation { engineState = .failed(error.localizedDescription) }
             throw error
         }
     }
 
     /// Builds the prompt, dropping the oldest messages when the conversation no longer fits the context.
-    private func buildPrompt(for conversationID: UUID) async throws -> String {
+    private func buildPrompt(for conversationID: UUID) async throws -> (String, [EngineImage]) {
         guard let conversation = conversations.first(where: { $0.id == conversationID }) else {
             throw EngineError.notLoaded
         }
-        var turns = conversation.messages.dropLast()
+
+        struct Turn {
+            let isUser: Bool
+            let text: String
+            let images: [EngineImage]
+        }
+        let marker = LlamaEngine.mediaMarker
+        let useImages = canSeeImages
+        var turns: [Turn] = conversation.messages.dropLast()
             .filter { !$0.isError }
-            .map { PromptTurn(isUser: $0.role == .user, text: $0.role == .user ? $0.text : $0.answer) }
+            .map { message -> Turn in
+                let images = useImages ? message.imageNames.compactMap { ImageStore.engineImage(named: $0) } : []
+                return Turn(
+                    isUser: message.role == .user,
+                    text: message.role == .user ? message.text : message.answer,
+                    images: images
+                )
+            }
             .filter { !$0.text.isEmpty }
+
+        var system = settings.systemPrompt
+        if settings.uncensored {
+            system += "\n\n" + AppSettings.uncensoredInstruction
+        }
 
         let budget = settings.contextSize - min(settings.maxResponseTokens, settings.contextSize / 2)
         while true {
-            var prompt = template.render(system: settings.systemPrompt, turns: turns)
+            let promptTurns = turns.map { turn in
+                PromptTurn(
+                    isUser: turn.isUser,
+                    text: String(repeating: marker + "\n", count: turn.images.count) + turn.text
+                )
+            }
+            var prompt = template.render(system: system, turns: promptTurns)
             if supportsThinking, !settings.thinkingEnabled {
                 prompt += "<think>\n\n</think>\n\n"
             }
-            if try await engine.tokenCount(prompt) <= budget { return prompt }
+            let images = turns.flatMap(\.images)
+            if try await engine.tokenCount(prompt, images: images) <= budget { return (prompt, images) }
             guard turns.count > 1 else { throw EngineError.promptTooLong }
             turns.removeFirst(turns.count > 2 ? 2 : 1)
         }

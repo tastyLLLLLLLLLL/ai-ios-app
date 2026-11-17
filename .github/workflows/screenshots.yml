@@ -20,7 +20,7 @@ env:
 jobs:
   screenshots:
     runs-on: macos-15
-    timeout-minutes: 75
+    timeout-minutes: 110
     steps:
       - uses: actions/checkout@v4
 
@@ -86,8 +86,20 @@ jobs:
           done
           ls -lh model.gguf
 
+      # Gemma 3 4B with its vision module, to check that photos work.
+      - name: Download the vision model
+        run: |
+          curl -fL --retry 2 -o vision-model.gguf \
+            "https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q4_K_M.gguf"
+          curl -fL --retry 2 -o vision-module.gguf \
+            "https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/main/mmproj-model-f16.gguf"
+          ls -lh vision-model.gguf vision-module.gguf
+
       - name: Take screenshots
-        timeout-minutes: 50
+        timeout-minutes: 80
+        env:
+          VISION_MODEL: vision-model.gguf
+          VISION_MODULE: vision-module.gguf
         run: scripts/screenshots.sh build-sim/Build/Products/Release-iphonesimulator/PocketAI.app model.gguf "$MODEL_NAME"
 
       - uses: actions/upload-artifact@v4

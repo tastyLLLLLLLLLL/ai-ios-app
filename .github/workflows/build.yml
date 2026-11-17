@@ -31,22 +31,32 @@ jobs:
           done
           exit $status
 
-      - name: Download the llama.cpp engine
-        env:
-          GH_TOKEN: ${{ github.token }}
+      # The engine is built from source at the pinned version and cached between runs.
+      - name: Restore the llama.cpp engine
+        id: llama-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: Frameworks/llama.xcframework
+          key: llama-device-${{ env.LLAMA_TAG }}
+
+      - name: Build the llama.cpp engine
+        if: steps.llama-cache.outputs.cache-hit != 'true'
         run: |
-          # Use the pinned version; if its package is not published, take the newest one that is.
-          url="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_TAG}/llama-${LLAMA_TAG}-xcframework.zip"
-          if ! curl -fsL --retry 3 -o llama.zip "$url"; then
-            url=$(gh api "repos/ggml-org/llama.cpp/releases?per_page=30" \
-              --jq '[.[].assets[] | select(.name | endswith("xcframework.zip")) | .browser_download_url][0]')
-            curl -fL --retry 3 -o llama.zip "$url"
-          fi
-          echo "llama.cpp package: $url"
-          unzip -q llama.zip -d llama-unpacked
+          git clone --depth 1 --branch "$LLAMA_TAG" https://github.com/ggml-org/llama.cpp llama-src
+          cd llama-src
+          ./build-xcframework.sh ios-device > ../llama-build.log 2>&1 || { tail -60 ../llama-build.log; exit 1; }
+          cd ..
           mkdir -p Frameworks
-          mv llama-unpacked/build-apple/llama.xcframework Frameworks/
+          mv llama-src/build-apple/llama.xcframework Frameworks/
+          rm -rf llama-src
           ls Frameworks/llama.xcframework
+
+      - name: Save the llama.cpp engine
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: Frameworks/llama.xcframework
+          key: llama-device-${{ env.LLAMA_TAG }}
 
       - name: Generate the Xcode project
         run: |

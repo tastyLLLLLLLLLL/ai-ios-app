@@ -26,9 +26,16 @@ struct RootView: View {
                             showModels = true
                         } label: {
                             HStack(spacing: 5) {
+                                if model.isUncensoredActive {
+                                    Image(systemName: "lock.open.fill")
+                                        .font(.caption2.weight(.bold))
+                                        .foregroundStyle(Theme.accent)
+                                        .transition(.scale.combined(with: .opacity))
+                                }
                                 Text(model.activeModelName)
                                     .font(.subheadline.weight(.semibold))
                                     .lineLimit(1)
+                                    .contentTransition(.opacity)
                                 Image(systemName: "chevron.down")
                                     .font(.caption2.weight(.bold))
                                     .foregroundStyle(.secondary)
@@ -36,8 +43,10 @@ struct RootView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .glassCard(cornerRadius: 16)
+                            .animation(.smooth, value: model.activeModelName)
+                            .animation(.smooth, value: model.isUncensoredActive)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(PressableStyle())
                         .accessibilityLabel("Выбрать модель")
                     }
                     ToolbarItemGroup(placement: .topBarTrailing) {
@@ -48,7 +57,7 @@ struct RootView: View {
                         }
                         .accessibilityLabel("Настройки")
                         Button {
-                            model.newChat()
+                            withAnimation(.smooth) { model.newChat() }
                         } label: {
                             Image(systemName: "square.and.pencil")
                         }
@@ -69,8 +78,15 @@ struct RootView: View {
         }
         .task {
             // Launch arguments used by the automated screenshot run:
-            // -demoScreen models|settings|chats, -demoPrompt "text".
+            // -demoScreen models|settings|chats, -demoModel <file>, -demoUncensored YES,
+            // -demoImage <path>, -demoPrompt "text".
             let defaults = UserDefaults.standard
+            if let file = defaults.string(forKey: "demoModel"), model.models.installed.contains(file) {
+                model.models.select(file)
+            }
+            if defaults.bool(forKey: "demoUncensored") {
+                model.settings.uncensored = true
+            }
             switch defaults.string(forKey: "demoScreen") {
             case "models": showModels = true
             case "settings": showSettings = true
@@ -78,7 +94,11 @@ struct RootView: View {
             default: break
             }
             if let prompt = defaults.string(forKey: "demoPrompt") {
-                model.send(prompt)
+                var photos: [UIImage] = []
+                if let path = defaults.string(forKey: "demoImage"), let image = UIImage(contentsOfFile: path) {
+                    photos.append(image)
+                }
+                model.send(prompt, photos: photos)
             }
         }
         .onChange(of: scenePhase) {
@@ -108,7 +128,7 @@ struct ChatListView: View {
                     List {
                         ForEach(model.sortedConversations) { conversation in
                             Button {
-                                model.open(conversation.id)
+                                withAnimation(.smooth) { model.open(conversation.id) }
                                 dismiss()
                             } label: {
                                 VStack(alignment: .leading, spacing: 4) {
@@ -128,7 +148,7 @@ struct ChatListView: View {
                             )
                             .swipeActions {
                                 Button(role: .destructive) {
-                                    model.delete(conversation.id)
+                                    withAnimation(.smooth) { model.delete(conversation.id) }
                                 } label: {
                                     Label("Удалить", systemImage: "trash")
                                 }
@@ -145,7 +165,7 @@ struct ChatListView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
-                        model.newChat()
+                        withAnimation(.smooth) { model.newChat() }
                         dismiss()
                     } label: {
                         Label("Новый чат", systemImage: "square.and.pencil")

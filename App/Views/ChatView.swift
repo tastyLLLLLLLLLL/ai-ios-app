@@ -1,10 +1,17 @@
+import PhotosUI
 import SwiftUI
 import UIKit
+
+struct PendingPhoto: Identifiable {
+    let id = UUID()
+    let image: UIImage
+}
 
 struct ChatView: View {
     @Environment(AppModel.self) private var model
     @Binding var showModels: Bool
     @State private var draft = ""
+    @State private var photos: [PendingPhoto] = []
     @FocusState private var inputFocused: Bool
 
     private var messages: [ChatMessage] {
@@ -17,28 +24,38 @@ struct ChatView: View {
     }
 
     var body: some View {
-        Group {
+        ZStack {
             if messages.isEmpty {
                 EmptyStateView(showModels: $showModels) { suggestion in
                     model.send(suggestion)
                 }
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
             } else {
                 messageList
+                    .id(model.currentID)
+                    .transition(.opacity)
             }
         }
+        .animation(.easeInOut(duration: 0.3), value: messages.isEmpty)
+        .animation(.easeInOut(duration: 0.25), value: model.currentID)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 8) {
                 statusPill
                 InputBar(
                     draft: $draft,
+                    photos: $photos,
+                    showModels: $showModels,
                     focused: $inputFocused,
                     isGenerating: model.isGenerating,
                     canSend: model.models.selectedFile != nil,
+                    canAttachPhotos: model.models.canSeePhotos,
                     onSend: {
                         let text = draft
+                        let images = photos.map(\.image)
                         draft = ""
-                        model.send(text)
+                        withAnimation(.smooth) { photos = [] }
+                        model.send(text, photos: images)
                     },
                     onStop: { model.stop() }
                 )
@@ -59,6 +76,12 @@ struct ChatView: View {
                             isGenerating: model.isGenerating,
                             onRegenerate: { model.regenerate() }
                         )
+                        .transition(
+                            .asymmetric(
+                                insertion: .move(edge: .bottom).combined(with: .opacity),
+                                removal: .opacity
+                            )
+                        )
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }
@@ -72,7 +95,7 @@ struct ChatView: View {
             }
             .onChange(of: inputFocused) {
                 if inputFocused {
-                    withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
+                    withAnimation(.smooth) { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
             }
         }
@@ -89,7 +112,7 @@ struct ChatView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .glassCard(cornerRadius: 18)
-            .transition(.opacity)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }
 }
@@ -98,42 +121,150 @@ struct ChatView: View {
 
 struct InputBar: View {
     @Binding var draft: String
+    @Binding var photos: [PendingPhoto]
+    @Binding var showModels: Bool
     var focused: FocusState<Bool>.Binding
     let isGenerating: Bool
     let canSend: Bool
+    let canAttachPhotos: Bool
     let onSend: () -> Void
     let onStop: () -> Void
 
-    private var hasText: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    @State private var pickedItems: [PhotosPickerItem] = []
+    @State private var showVisionHint = false
+
+    private static let maxPhotos = 3
+
+    private var hasContent: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !photos.isEmpty
     }
 
-    var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            TextField(canSend ? "Сообщение" : "Сначала скачайте модель", text: $draft, axis: .vertical)
-                .lineLimit(1...6)
-                .focused(focused)
-                .disabled(!canSend)
-                .padding(.leading, 16)
-                .padding(.vertical, 12)
+    private var sendEnabled: Bool { isGenerating || (hasContent && canSend) }
 
-            Button {
-                if isGenerating { onStop() } else { onSend() }
-            } label: {
-                Image(systemName: isGenerating ? "stop.fill" : "arrow.up")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 36, height: 36)
-                    .background(Theme.accent, in: Circle())
-                    .opacity(isGenerating || (hasText && canSend) ? 1 : 0.35)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !photos.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(photos) { photo in
+                            thumbnail(photo)
+                                .transition(.scale(scale: 0.6).combined(with: .opacity))
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
+                }
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            .disabled(!isGenerating && !(hasText && canSend))
-            .padding(.trailing, 6)
-            .padding(.bottom, 5)
-            .accessibilityLabel(isGenerating ? "Остановить" : "Отправить")
+
+            HStack(alignment: .bottom, spacing: 4) {
+                attachButton
+
+                TextField(canSend ? "Сообщение" : "Сначала скачайте модель", text: $draft, axis: .vertical)
+                    .lineLimit(1...6)
+                    .focused(focused)
+                    .disabled(!canSend)
+                    .padding(.vertical, 12)
+
+                Button {
+                    if isGenerating { onStop() } else { onSend() }
+                } label: {
+                    Image(systemName: isGenerating ? "stop.fill" : "arrow.up")
+                        .font(.system(size: 16, weight: .bold))
+                        .contentTransition(.symbolEffect(.replace))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(Theme.accent, in: Circle())
+                        .opacity(sendEnabled ? 1 : 0.35)
+                        .scaleEffect(sendEnabled ? 1 : 0.9)
+                        .animation(.smooth, value: sendEnabled)
+                }
+                .buttonStyle(PressableStyle(scale: 0.88))
+                .disabled(!sendEnabled)
+                .padding(.trailing, 6)
+                .padding(.bottom, 5)
+                .accessibilityLabel(isGenerating ? "Остановить" : "Отправить")
+            }
         }
         .glassCard(cornerRadius: 24)
         .shadow(color: .black.opacity(0.12), radius: 16, y: 6)
+        .animation(.smooth, value: photos.count)
+        .onChange(of: pickedItems) {
+            let items = pickedItems
+            guard !items.isEmpty else { return }
+            pickedItems = []
+            Task {
+                for item in items {
+                    guard photos.count < Self.maxPhotos else { break }
+                    if let data = try? await item.loadTransferable(type: Data.self),
+                       let image = UIImage(data: data) {
+                        photos.append(PendingPhoto(image: image.downscaled(maxSide: 1024)))
+                    }
+                }
+            }
+        }
+        .alert("Эта модель не видит фото", isPresented: $showVisionHint) {
+            Button("Открыть модели") { showModels = true }
+            Button("Отмена", role: .cancel) {}
+        } message: {
+            Text("Чтобы прикреплять фотографии, скачайте и выберите модель Gemma 3 4B — у неё есть модуль зрения.")
+        }
+    }
+
+    @ViewBuilder
+    private var attachButton: some View {
+        let icon = Image(systemName: "photo.on.rectangle.angled")
+            .font(.system(size: 18, weight: .medium))
+            .foregroundStyle(canAttachPhotos ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.secondary))
+            .frame(width: 40, height: 36)
+            .padding(.leading, 6)
+            .padding(.bottom, 5)
+
+        if canAttachPhotos {
+            PhotosPicker(
+                selection: $pickedItems,
+                maxSelectionCount: Self.maxPhotos,
+                matching: .images
+            ) {
+                icon
+            }
+            .buttonStyle(PressableStyle(scale: 0.88))
+            .disabled(photos.count >= Self.maxPhotos)
+            .accessibilityLabel("Прикрепить фото")
+        } else {
+            Button {
+                showVisionHint = true
+            } label: {
+                icon
+            }
+            .buttonStyle(PressableStyle(scale: 0.88))
+            .disabled(!canSend)
+            .accessibilityLabel("Прикрепить фото")
+        }
+    }
+
+    private func thumbnail(_ photo: PendingPhoto) -> some View {
+        Image(uiImage: photo.image)
+            .resizable()
+            .scaledToFill()
+            .frame(width: 64, height: 64)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(alignment: .topTrailing) {
+                Button {
+                    withAnimation(.smooth) {
+                        photos.removeAll { $0.id == photo.id }
+                    }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 20, height: 20)
+                        .background(.black.opacity(0.65), in: Circle())
+                }
+                .buttonStyle(PressableStyle(scale: 0.8))
+                .offset(x: 5, y: -5)
+                .accessibilityLabel("Убрать фото")
+            }
     }
 }
 
@@ -145,12 +276,26 @@ struct MessageRow: View {
     let isGenerating: Bool
     let onRegenerate: () -> Void
 
+    @State private var copied = false
+
     private var isStreaming: Bool { isLast && isGenerating }
 
     var body: some View {
         if message.role == .user {
-            HStack {
-                Spacer(minLength: 48)
+            VStack(alignment: .trailing, spacing: 6) {
+                ForEach(message.imageNames, id: \.self) { name in
+                    if let image = ImageStore.image(named: name) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: 220, maxHeight: 260)
+                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
+                            )
+                    }
+                }
                 Text(message.text)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 15)
@@ -164,6 +309,8 @@ struct MessageRow: View {
                         }
                     }
             }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.leading, 48)
         } else {
             assistantBody
         }
@@ -173,17 +320,22 @@ struct MessageRow: View {
         VStack(alignment: .leading, spacing: 10) {
             if let thinking = message.thinking {
                 ThinkingView(text: thinking, inProgress: message.isThinking && isStreaming)
+                    .transition(.opacity)
             }
 
             if message.isError {
                 Label(message.text, systemImage: "exclamationmark.triangle.fill")
                     .font(.callout)
                     .foregroundStyle(.red)
+                    .transition(.opacity)
             } else if !message.answer.isEmpty {
                 MarkdownView(text: message.answer)
                     .textSelection(.enabled)
+                    .transition(.opacity)
             } else if isStreaming {
-                if message.thinking == nil { TypingDots() }
+                if message.thinking == nil {
+                    TypingDots().transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .leading)))
+                }
             } else {
                 Text("Ответ остановлен")
                     .font(.callout)
@@ -195,8 +347,15 @@ struct MessageRow: View {
                     if !message.answer.isEmpty {
                         Button {
                             UIPasteboard.general.string = message.answer
+                            withAnimation(.smooth) { copied = true }
+                            Task {
+                                try? await Task.sleep(for: .seconds(1.5))
+                                withAnimation(.smooth) { copied = false }
+                            }
                         } label: {
-                            Image(systemName: "doc.on.doc")
+                            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                                .contentTransition(.symbolEffect(.replace))
+                                .foregroundStyle(copied ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.secondary))
                         }
                         .accessibilityLabel("Копировать ответ")
                     }
@@ -212,11 +371,14 @@ struct MessageRow: View {
                     }
                 }
                 .font(.footnote)
-                .buttonStyle(.plain)
+                .buttonStyle(PressableStyle(scale: 0.85))
                 .foregroundStyle(.secondary)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(.easeOut(duration: 0.25), value: isStreaming)
+        .animation(.easeOut(duration: 0.25), value: message.answer.isEmpty)
     }
 }
 
@@ -232,6 +394,7 @@ struct ThinkingView: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "brain")
+                        .symbolEffect(.pulse, isActive: inProgress)
                     Text(inProgress ? "Размышляю…" : "Размышления")
                     Image(systemName: "chevron.right")
                         .font(.caption2.weight(.bold))
@@ -243,7 +406,7 @@ struct ThinkingView: View {
                 .padding(.vertical, 7)
                 .glassCard(cornerRadius: 14)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PressableStyle())
 
             if expanded {
                 Text(text)
@@ -255,6 +418,7 @@ struct ThinkingView: View {
                             .fill(Color.secondary.opacity(0.35))
                             .frame(width: 2)
                     }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
     }
@@ -289,6 +453,8 @@ struct EmptyStateView: View {
     @Binding var showModels: Bool
     let onSuggestion: (String) -> Void
 
+    @State private var appeared = false
+
     private struct Suggestion: Identifiable {
         let icon: String
         let text: String
@@ -307,6 +473,9 @@ struct EmptyStateView: View {
             VStack(spacing: 22) {
                 OrbLogo(size: 96)
                     .padding(.top, 48)
+                    .scaleEffect(appeared ? 1 : 0.7)
+                    .opacity(appeared ? 1 : 0)
+                    .animation(.spring(response: 0.6, dampingFraction: 0.7), value: appeared)
 
                 VStack(spacing: 8) {
                     Text("Чем помочь?")
@@ -316,12 +485,18 @@ struct EmptyStateView: View {
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
+                .opacity(appeared ? 1 : 0)
+                .offset(y: appeared ? 0 : 12)
+                .animation(.smooth.delay(0.08), value: appeared)
 
                 if model.models.selectedFile == nil {
                     noModelCard
+                        .opacity(appeared ? 1 : 0)
+                        .offset(y: appeared ? 0 : 16)
+                        .animation(.smooth.delay(0.16), value: appeared)
                 } else {
                     VStack(spacing: 10) {
-                        ForEach(suggestions) { suggestion in
+                        ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, suggestion in
                             Button {
                                 onSuggestion(suggestion.text)
                             } label: {
@@ -337,7 +512,10 @@ struct EmptyStateView: View {
                                 .padding(14)
                                 .glassCard(cornerRadius: 18)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(PressableStyle())
+                            .opacity(appeared ? 1 : 0)
+                            .offset(y: appeared ? 0 : 16)
+                            .animation(.smooth.delay(0.14 + Double(index) * 0.06), value: appeared)
                         }
                     }
                 }
@@ -346,6 +524,7 @@ struct EmptyStateView: View {
             .padding(.bottom, 24)
         }
         .scrollDismissesKeyboard(.interactively)
+        .onAppear { appeared = true }
     }
 
     private var noModelCard: some View {
@@ -366,7 +545,7 @@ struct EmptyStateView: View {
                     .padding(.vertical, 14)
                     .background(Theme.accent, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PressableStyle())
         }
         .padding(18)
         .glassCard()

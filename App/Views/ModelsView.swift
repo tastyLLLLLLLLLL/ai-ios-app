@@ -8,6 +8,7 @@ struct ModelsView: View {
     @State private var showLinkPrompt = false
     @State private var link = ""
     @State private var linkError = false
+    @State private var appeared = false
 
     private var store: ModelStore { model.models }
 
@@ -20,15 +21,11 @@ struct ModelsView: View {
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 4)
 
-                    ForEach(ModelCatalog.models) { item in
-                        ModelCard(
-                            name: item.name,
-                            summary: item.summary,
-                            sizeLabel: item.sizeLabel,
-                            badge: item.badge,
-                            fileName: item.fileName,
-                            onDownload: { store.download(item) }
-                        )
+                    ForEach(Array(ModelCatalog.models.enumerated()), id: \.element.id) { index, item in
+                        CatalogModelCard(item: item)
+                            .opacity(appeared ? 1 : 0)
+                            .offset(y: appeared ? 0 : 18)
+                            .animation(.smooth.delay(Double(index) * 0.06), value: appeared)
                     }
 
                     Text("Свои модели")
@@ -37,16 +34,8 @@ struct ModelsView: View {
                         .padding(.horizontal, 4)
 
                     ForEach(store.customEntries, id: \.self) { fileName in
-                        ModelCard(
-                            name: ModelCatalog.displayName(forFile: fileName),
-                            summary: "Добавлена вручную",
-                            sizeLabel: store.installed.contains(fileName) ? store.sizeLabel(for: fileName) : "",
-                            badge: nil,
-                            fileName: fileName,
-                            actionTitle: "Убрать из списка",
-                            actionIcon: "xmark.circle.fill",
-                            onDownload: { store.clearError(fileName) }
-                        )
+                        CustomModelCard(fileName: fileName)
+                            .transition(.opacity.combined(with: .scale(scale: 0.96)))
                     }
 
                     VStack(spacing: 0) {
@@ -57,6 +46,7 @@ struct ModelsView: View {
                             Label("Скачать по ссылке на файл .gguf", systemImage: "link")
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(14)
+                                .contentShape(Rectangle())
                         }
                         Divider().padding(.leading, 14)
                         Button {
@@ -68,10 +58,11 @@ struct ModelsView: View {
                                 if store.isImporting { ProgressView() }
                             }
                             .padding(14)
+                            .contentShape(Rectangle())
                         }
                         .disabled(store.isImporting)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(PressableStyle(scale: 0.98))
                     .glassCard(cornerRadius: 18)
 
                     Text("Подойдёт любая модель в формате GGUF. Для iPhone с 8 ГБ памяти выбирайте файлы до 3 ГБ.")
@@ -80,6 +71,7 @@ struct ModelsView: View {
                         .padding(.horizontal, 4)
                 }
                 .padding(16)
+                .animation(.smooth, value: store.customEntries)
             }
             .background(AuroraBackground())
             .navigationTitle("Модели")
@@ -89,6 +81,7 @@ struct ModelsView: View {
                     Button("Готово") { dismiss() }
                 }
             }
+            .onAppear { appeared = true }
             .fileImporter(isPresented: $showImporter, allowedContentTypes: [.data]) { result in
                 if case .success(let url) = result {
                     store.importFile(from: url)
@@ -114,22 +107,115 @@ struct ModelsView: View {
     }
 }
 
-struct ModelCard: View {
+// MARK: - Cards
+
+/// What a model card shows under the description.
+private enum CardState: Equatable {
+    case notInstalled
+    case downloading(DownloadProgress)
+    case installed
+}
+
+struct CatalogModelCard: View {
     @Environment(AppModel.self) private var model
+    let item: CatalogModel
+
+    private var store: ModelStore { model.models }
+
+    private var state: CardState {
+        if let progress = store.progress(for: item) { return .downloading(progress) }
+        return store.installed.contains(item.fileName) ? .installed : .notInstalled
+    }
+
+    var body: some View {
+        ModelCardShell(
+            name: item.name,
+            summary: item.summary,
+            sizeLabel: item.sizeLabel,
+            badge: item.badge,
+            error: store.error(for: item),
+            state: state,
+            isSelected: store.selectedFile == item.fileName,
+            actionTitle: "Скачать",
+            actionIcon: "arrow.down.circle.fill",
+            onAction: { store.download(item) },
+            onCancel: { store.cancelDownload(item) },
+            onSelect: { store.select(item.fileName) },
+            onDelete: { store.delete(item.fileName) }
+        ) {
+            if store.needsVisionDownload(item) {
+                Button {
+                    store.downloadVision(for: item)
+                } label: {
+                    Label("Скачать модуль зрения (≈ 0,85 ГБ)", systemImage: "eye")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                }
+                .buttonStyle(PressableStyle())
+                .transition(.opacity)
+            }
+        }
+    }
+}
+
+struct CustomModelCard: View {
+    @Environment(AppModel.self) private var model
+    let fileName: String
+
+    private var store: ModelStore { model.models }
+
+    private var state: CardState {
+        if let progress = store.downloads[fileName] { return .downloading(progress) }
+        return store.installed.contains(fileName) ? .installed : .notInstalled
+    }
+
+    var body: some View {
+        ModelCardShell(
+            name: ModelCatalog.displayName(forFile: fileName),
+            summary: "Добавлена вручную",
+            sizeLabel: store.installed.contains(fileName) ? store.sizeLabel(for: fileName) : "",
+            badge: nil,
+            error: store.errors[fileName],
+            state: state,
+            isSelected: store.selectedFile == fileName,
+            actionTitle: "Убрать из списка",
+            actionIcon: "xmark.circle.fill",
+            onAction: { store.clearError(fileName) },
+            onCancel: { store.cancelDownload(fileName) },
+            onSelect: { store.select(fileName) },
+            onDelete: { store.delete(fileName) }
+        ) {
+            EmptyView()
+        }
+    }
+}
+
+private struct ModelCardShell<Extra: View>: View {
     let name: String
     let summary: String
     let sizeLabel: String
     let badge: String?
-    let fileName: String
-    var actionTitle = "Скачать"
-    var actionIcon = "arrow.down.circle.fill"
-    let onDownload: () -> Void
+    let error: String?
+    let state: CardState
+    let isSelected: Bool
+    let actionTitle: String
+    let actionIcon: String
+    let onAction: () -> Void
+    let onCancel: () -> Void
+    let onSelect: () -> Void
+    let onDelete: () -> Void
+    @ViewBuilder let extra: () -> Extra
 
     @State private var confirmDelete = false
 
-    private var store: ModelStore { model.models }
-    private var isInstalled: Bool { store.installed.contains(fileName) }
-    private var isSelected: Bool { store.selectedFile == fileName }
+    /// Collapses progress updates into one value so only real state changes animate.
+    private var stateKind: Int {
+        switch state {
+        case .notInstalled: return 0
+        case .downloading: return 1
+        case .installed: return 2
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -156,59 +242,73 @@ struct ModelCard: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            if let error = store.errors[fileName] {
+            if let error {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote)
                     .foregroundStyle(.red)
+                    .transition(.opacity)
             }
 
             controls
+            extra()
         }
         .padding(16)
         .glassCard()
         .overlay(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(Theme.accent, lineWidth: isSelected ? 2 : 0)
+                .strokeBorder(Theme.accent, lineWidth: 2)
+                .opacity(isSelected ? 1 : 0)
         )
+        .scaleEffect(isSelected ? 1 : 0.985)
+        .animation(.smooth, value: isSelected)
+        .animation(.smooth, value: stateKind)
+        .sensoryFeedback(.selection, trigger: isSelected)
         .confirmationDialog("Удалить модель «\(name)» с телефона?", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("Удалить", role: .destructive) { store.delete(fileName) }
+            Button("Удалить", role: .destructive) {
+                withAnimation(.smooth) { onDelete() }
+            }
             Button("Отмена", role: .cancel) {}
         }
     }
 
     @ViewBuilder
     private var controls: some View {
-        if let progress = store.downloads[fileName] {
+        switch state {
+        case .downloading(let progress):
             VStack(alignment: .leading, spacing: 6) {
                 ProgressView(value: progress.fraction)
                     .tint(Theme.blue)
+                    .animation(.linear(duration: 0.3), value: progress.fraction)
                 HStack {
                     Text(progressLabel(progress))
                         .font(.footnote)
                         .monospacedDigit()
+                        .contentTransition(.numericText())
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Button("Отменить") { store.cancelDownload(fileName) }
+                    Button("Отменить", action: onCancel)
                         .font(.footnote.weight(.medium))
                 }
             }
-        } else if isInstalled {
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+
+        case .installed:
             HStack {
                 if isSelected {
                     Label("Используется", systemImage: "checkmark.circle.fill")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Theme.accent)
+                        .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .leading)))
                 } else {
-                    Button {
-                        store.select(fileName)
-                    } label: {
+                    Button(action: onSelect) {
                         Text("Использовать")
                             .font(.subheadline.weight(.semibold))
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
                             .background(Color.primary.opacity(0.08), in: Capsule())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(PressableStyle())
+                    .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .leading)))
                 }
                 Spacer()
                 Button(role: .destructive) {
@@ -218,8 +318,10 @@ struct ModelCard: View {
                 }
                 .accessibilityLabel("Удалить модель")
             }
-        } else {
-            Button(action: onDownload) {
+            .transition(.opacity)
+
+        case .notInstalled:
+            Button(action: onAction) {
                 Label(actionTitle, systemImage: actionIcon)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.white)
@@ -227,7 +329,8 @@ struct ModelCard: View {
                     .padding(.vertical, 9)
                     .background(Theme.accent, in: Capsule())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PressableStyle())
+            .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .leading)))
         }
     }
 

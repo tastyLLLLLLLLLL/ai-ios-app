@@ -1,6 +1,13 @@
 import Foundation
 import llama
 
+/// A photo as raw RGB pixels, three bytes per pixel.
+struct EngineImage: Sendable {
+    let width: Int
+    let height: Int
+    let rgb: Data
+}
+
 struct GenerationOptions: Sendable {
     var temperature: Float
     var maxTokens: Int
@@ -12,6 +19,7 @@ enum EngineError: LocalizedError {
     case contextFailed
     case tokenizeFailed
     case promptTooLong
+    case imageFailed
     case decodeFailed(Int32)
 
     var errorDescription: String? {
@@ -21,6 +29,7 @@ enum EngineError: LocalizedError {
         case .contextFailed: return "Не удалось подготовить модель к работе: не хватает памяти. Уменьшите размер контекста в настройках."
         case .tokenizeFailed: return "Не удалось обработать текст запроса."
         case .promptTooLong: return "Сообщение слишком длинное для выбранного размера контекста."
+        case .imageFailed: return "Не удалось обработать фотографию."
         case .decodeFailed(let code): return "Ошибка вычислений (код \(code)). Попробуйте ещё раз."
         }
     }
@@ -31,7 +40,11 @@ final class LlamaEngine: @unchecked Sendable {
     struct LoadedInfo: Sendable {
         let chatTemplate: String
         let contextSize: Int
+        let canSeeImages: Bool
     }
+
+    /// Placeholder that marks where a photo goes inside the prompt text.
+    static var mediaMarker: String { String(cString: mtmd_default_marker()) }
 
     private static let batchSize: Int32 = 512
     private static let backend: Void = { llama_backend_init() }()
@@ -40,6 +53,7 @@ final class LlamaEngine: @unchecked Sendable {
     private var model: OpaquePointer?
     private var context: OpaquePointer?
     private var vocab: OpaquePointer?
+    private var vision: OpaquePointer?
     private var contextSize: Int32 = 0
     /// Tokens currently held in the model's memory, so a follow-up prompt only evaluates what changed.
     private var cached: [llama_token] = []
@@ -50,25 +64,34 @@ final class LlamaEngine: @unchecked Sendable {
 
     // MARK: - Public API
 
-    func load(path: String, contextSize: Int) async throws -> LoadedInfo {
-        try await run { try self.loadSync(path: path, contextSize: contextSize) }
+    func load(path: String, visionPath: String?, contextSize: Int) async throws -> LoadedInfo {
+        try await run { try self.loadSync(path: path, visionPath: visionPath, contextSize: contextSize) }
     }
 
     func unload() async {
         _ = try? await run { self.unloadSync() }
     }
 
-    func tokenCount(_ text: String) async throws -> Int {
-        try await run { try self.tokenizeSync(text).count }
+    func tokenCount(_ text: String, images: [EngineImage] = []) async throws -> Int {
+        try await run {
+            guard !images.isEmpty, self.vision != nil else { return try self.tokenizeSync(text).count }
+            let chunks = try self.makeChunks(prompt: text, images: images, placeholders: true)
+            defer { mtmd_input_chunks_free(chunks) }
+            return Int(mtmd_helper_get_n_tokens(chunks))
+        }
     }
 
-    func generate(prompt: String, options: GenerationOptions) -> AsyncThrowingStream<String, Error> {
+    func generate(
+        prompt: String,
+        images: [EngineImage] = [],
+        options: GenerationOptions
+    ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let id = self.nextID()
             continuation.onTermination = { [weak self] _ in self?.cancel(upTo: id) }
             self.queue.async {
                 do {
-                    try self.generateSync(id: id, prompt: prompt, options: options) { piece in
+                    try self.generateSync(id: id, prompt: prompt, images: images, options: options) { piece in
                         continuation.yield(piece)
                     }
                     continuation.finish()
@@ -121,6 +144,8 @@ final class LlamaEngine: @unchecked Sendable {
     }
 
     private func unloadSync() {
+        if let vision { mtmd_free(vision) }
+        vision = nil
         if let context { llama_free(context) }
         if let model { llama_model_free(model) }
         context = nil
@@ -130,7 +155,7 @@ final class LlamaEngine: @unchecked Sendable {
         contextSize = 0
     }
 
-    private func loadSync(path: String, contextSize: Int) throws -> LoadedInfo {
+    private func loadSync(path: String, visionPath: String?, contextSize: Int) throws -> LoadedInfo {
         _ = Self.backend
         unloadSync()
 
@@ -148,11 +173,15 @@ final class LlamaEngine: @unchecked Sendable {
         var contextParams = llama_context_default_params()
         contextParams.n_ctx = UInt32(contextSize)
         contextParams.n_batch = UInt32(Self.batchSize)
-        contextParams.n_threads = 4
-        contextParams.n_threads_batch = 4
         #if targetEnvironment(simulator)
+        // The simulator computes on the CPU; using more threads than cores makes it crawl.
+        let threads = Int32(max(1, min(4, ProcessInfo.processInfo.activeProcessorCount - 1)))
         contextParams.offload_kqv = false
+        #else
+        let threads: Int32 = 4
         #endif
+        contextParams.n_threads = threads
+        contextParams.n_threads_batch = threads
 
         guard let loadedContext = llama_init_from_model(loadedModel, contextParams) else {
             llama_model_free(loadedModel)
@@ -168,7 +197,26 @@ final class LlamaEngine: @unchecked Sendable {
         if let pointer = llama_model_chat_template(loadedModel, nil) {
             template = String(cString: pointer)
         }
-        return LoadedInfo(chatTemplate: template, contextSize: Int(self.contextSize))
+
+        if let visionPath {
+            var visionParams = mtmd_context_params_default()
+            #if targetEnvironment(simulator)
+            visionParams.use_gpu = false
+            #else
+            visionParams.use_gpu = true
+            #endif
+            visionParams.print_timings = false
+            visionParams.n_threads = threads
+            visionParams.warmup = false
+            vision = mtmd_init_from_file(visionPath, loadedModel, visionParams)
+        }
+        let canSeeImages = vision.map { mtmd_support_vision($0) } ?? false
+
+        return LoadedInfo(
+            chatTemplate: template,
+            contextSize: Int(self.contextSize),
+            canSeeImages: canSeeImages
+        )
     }
 
     private func tokenizeSync(_ text: String) throws -> [llama_token] {
@@ -182,6 +230,49 @@ final class LlamaEngine: @unchecked Sendable {
         }
         guard count >= 0 else { throw EngineError.tokenizeFailed }
         return Array(tokens.prefix(Int(count)))
+    }
+
+    /// Splits a prompt with photo markers into text and image parts.
+    /// With `placeholders` the photos are only measured, which is enough for counting tokens.
+    private func makeChunks(prompt: String, images: [EngineImage], placeholders: Bool) throws -> OpaquePointer {
+        guard let vision else { throw EngineError.notLoaded }
+
+        var bitmaps: [OpaquePointer?] = []
+        defer {
+            for bitmap in bitmaps { mtmd_bitmap_free(bitmap) }
+        }
+        for image in images {
+            let bitmap: OpaquePointer?
+            if placeholders {
+                bitmap = mtmd_bitmap_init(UInt32(image.width), UInt32(image.height), nil)
+            } else {
+                bitmap = image.rgb.withUnsafeBytes { buffer in
+                    mtmd_bitmap_init(
+                        UInt32(image.width),
+                        UInt32(image.height),
+                        buffer.bindMemory(to: UInt8.self).baseAddress
+                    )
+                }
+            }
+            guard let bitmap else { throw EngineError.imageFailed }
+            bitmaps.append(bitmap)
+        }
+
+        guard let chunks = mtmd_input_chunks_init() else { throw EngineError.imageFailed }
+        let result: Int32 = prompt.withCString { cString in
+            var text = mtmd_input_text(
+                text: cString,
+                text_len: strlen(cString),
+                add_special: true,
+                parse_special: true
+            )
+            return mtmd_tokenize(vision, chunks, &text, bitmaps, bitmaps.count)
+        }
+        guard result == 0 else {
+            mtmd_input_chunks_free(chunks)
+            throw EngineError.imageFailed
+        }
+        return chunks
     }
 
     private func piece(for token: llama_token, vocab: OpaquePointer) -> [UInt8] {
@@ -213,47 +304,73 @@ final class LlamaEngine: @unchecked Sendable {
     private func generateSync(
         id: Int,
         prompt: String,
+        images: [EngineImage],
         options: GenerationOptions,
         emit: (String) -> Void
     ) throws {
         guard let context, let vocab else { throw EngineError.notLoaded }
 
-        let tokens = try tokenizeSync(prompt)
-        guard !tokens.isEmpty else { throw EngineError.tokenizeFailed }
-        guard tokens.count < Int(contextSize) - 16 else { throw EngineError.promptTooLong }
-
-        // Reuse the part of the conversation the model has already seen.
-        var common = 0
-        while common < cached.count, common < tokens.count, cached[common] == tokens[common] {
-            common += 1
-        }
-        if common == tokens.count { common -= 1 }
-        if common > 0, llama_memory_seq_rm(llama_get_memory(context), 0, Int32(common), -1) {
-            cached = Array(tokens[0..<common])
-        } else {
-            resetMemory(context)
-            common = 0
-        }
-
         var batch = llama_batch_init(Self.batchSize, 0, 1)
         defer { llama_batch_free(batch) }
 
-        var index = common
-        while index < tokens.count {
-            if isCancelled(id) { return }
-            let end = min(index + Int(Self.batchSize), tokens.count)
-            batch.n_tokens = 0
-            for position in index..<end {
-                add(tokens[position], at: Int32(position), logits: position == tokens.count - 1, to: &batch)
+        var position: Int32
+        // The token cache only describes text-only prompts.
+        var tracksCache = true
+
+        if let vision, !images.isEmpty {
+            tracksCache = false
+            // Prompt with photos: the image parts are encoded by the vision module.
+            let chunks = try makeChunks(prompt: prompt, images: images, placeholders: false)
+            defer { mtmd_input_chunks_free(chunks) }
+            guard Int(mtmd_helper_get_n_tokens(chunks)) < Int(contextSize) - 16 else {
+                throw EngineError.promptTooLong
             }
-            let result = llama_decode(context, batch)
+            resetMemory(context)
+            var newPosition: llama_pos = 0
+            let result = mtmd_helper_eval_chunks(vision, context, chunks, 0, 0, Self.batchSize, true, &newPosition)
             guard result == 0 else {
                 resetMemory(context)
                 throw EngineError.decodeFailed(result)
             }
-            cached.append(contentsOf: tokens[index..<end])
-            index = end
+            position = newPosition
+        } else {
+            let tokens = try tokenizeSync(prompt)
+            guard !tokens.isEmpty else { throw EngineError.tokenizeFailed }
+            guard tokens.count < Int(contextSize) - 16 else { throw EngineError.promptTooLong }
+
+            // Reuse the part of the conversation the model has already seen.
+            var common = 0
+            while common < cached.count, common < tokens.count, cached[common] == tokens[common] {
+                common += 1
+            }
+            if common == tokens.count { common -= 1 }
+            if common > 0, llama_memory_seq_rm(llama_get_memory(context), 0, Int32(common), -1) {
+                cached = Array(tokens[0..<common])
+            } else {
+                resetMemory(context)
+                common = 0
+            }
+
+            var index = common
+            while index < tokens.count {
+                if isCancelled(id) { return }
+                let end = min(index + Int(Self.batchSize), tokens.count)
+                batch.n_tokens = 0
+                for tokenIndex in index..<end {
+                    add(tokens[tokenIndex], at: Int32(tokenIndex), logits: tokenIndex == tokens.count - 1, to: &batch)
+                }
+                let result = llama_decode(context, batch)
+                guard result == 0 else {
+                    resetMemory(context)
+                    throw EngineError.decodeFailed(result)
+                }
+                cached.append(contentsOf: tokens[index..<end])
+                index = end
+            }
+            position = Int32(tokens.count)
         }
+
+        if isCancelled(id) { return }
 
         guard let sampler = llama_sampler_chain_init(llama_sampler_chain_default_params()) else {
             throw EngineError.contextFailed
@@ -267,7 +384,6 @@ final class LlamaEngine: @unchecked Sendable {
 
         var pending: [UInt8] = []
         var produced = 0
-        var position = Int32(tokens.count)
 
         while produced < options.maxTokens, position < contextSize {
             if isCancelled(id) { break }
@@ -291,7 +407,7 @@ final class LlamaEngine: @unchecked Sendable {
                 resetMemory(context)
                 throw EngineError.decodeFailed(result)
             }
-            cached.append(token)
+            if tracksCache { cached.append(token) }
             position += 1
             produced += 1
         }
