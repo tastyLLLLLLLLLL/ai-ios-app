@@ -33,14 +33,13 @@ struct AppIconOption: Identifiable {
     let id: String
     let name: String
 
-    /// Icons drawn as pictures, in addition to one icon per colour theme.
+    /// Pixel-art pictures, in addition to the pixel monster in each colour theme.
     static let illustrated: [AppIconOption] = [
-        AppIconOption(id: "monster", name: "Монстрик"),
-        AppIconOption(id: "rocket", name: "Ракета"),
-        AppIconOption(id: "planet", name: "Планета"),
-        AppIconOption(id: "neon", name: "Неон"),
-        AppIconOption(id: "retro", name: "Ретро"),
-        AppIconOption(id: "network", name: "Нейросеть")
+        AppIconOption(id: "cat", name: "Котик"),
+        AppIconOption(id: "robot", name: "Робот"),
+        AppIconOption(id: "alien", name: "Пришелец"),
+        AppIconOption(id: "heart", name: "Сердце"),
+        AppIconOption(id: "rocket", name: "Ракета")
     ]
 
     static let themed: [AppIconOption] = Palette.all.map { AppIconOption(id: $0.id, name: $0.name) }
@@ -92,6 +91,16 @@ final class ThemeStore {
         palette = Palette.all.first { $0.id == savedPalette } ?? Palette.all[0]
         appearance = AppearanceMode(rawValue: defaults.string(forKey: Self.appearanceKey) ?? "") ?? .system
         iconID = defaults.string(forKey: Self.iconKey) ?? Palette.all[0].id
+        // An icon from an older version may no longer exist.
+        if !AppIconOption.all.contains(where: { $0.id == iconID }) {
+            iconID = Palette.all[0].id
+            defaults.set(iconID, forKey: Self.iconKey)
+            Task { @MainActor in
+                if UIApplication.shared.alternateIconName != nil {
+                    UIApplication.shared.setAlternateIconName(nil) { _ in }
+                }
+            }
+        }
     }
 
     /// Changes the app icon on the home screen. iOS confirms the change with its own message.
