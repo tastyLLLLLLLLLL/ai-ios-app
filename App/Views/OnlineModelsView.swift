@@ -449,13 +449,15 @@ private struct OnlineModelCard: View {
             Text(item.summary)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            if item.uncensored {
-                Label("Без цензуры", systemImage: "lock.open.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Theme.tint)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Theme.tint.opacity(0.14), in: Capsule())
+            FlowLayout(spacing: 6) {
+                ForEach(ModelPerk.perks(for: item)) { perk in
+                    Label(perk.text, systemImage: perk.icon)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(perk.isDrawback ? Color.orange : Theme.tint)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background((perk.isDrawback ? Color.orange : Theme.tint).opacity(0.14), in: Capsule())
+                }
             }
             if isSelected {
                 Label("Используется", systemImage: "checkmark.circle.fill")
@@ -484,5 +486,110 @@ private struct OnlineModelCard: View {
                 .opacity(isSelected ? 1 : 0)
         )
         .animation(.smooth, value: isSelected)
+    }
+}
+
+// MARK: - Model strengths
+
+/// A short, concrete strength (or drawback) of a server model, shown as a chip on its card.
+struct ModelPerk: Identifiable {
+    let text: String
+    let icon: String
+    var isDrawback = false
+
+    var id: String { text }
+
+    static func perks(for model: OnlineModel) -> [ModelPerk] {
+        let id = model.id.lowercased()
+        var perks: [ModelPerk] = []
+        if model.uncensored || id.contains("abliterated") || id.contains("uncensored") {
+            perks.append(ModelPerk(text: "Без цензуры", icon: "lock.open.fill"))
+        }
+        if id.hasPrefix("qwen3.6") {
+            perks += [
+                ModelPerk(text: "Самая умная", icon: "crown.fill"),
+                ModelPerk(text: "Отличный русский", icon: "character.bubble.fill"),
+                ModelPerk(text: "Умеет рассуждать", icon: "brain"),
+                ModelPerk(text: "Хорошо пишет код", icon: "chevron.left.forwardslash.chevron.right")
+            ]
+        } else if id.hasPrefix("qwen3:32b") {
+            perks += [
+                ModelPerk(text: "Отличный русский", icon: "character.bubble.fill"),
+                ModelPerk(text: "Умеет рассуждать", icon: "brain")
+            ]
+        } else if id.hasPrefix("qwen3:4b") {
+            perks += [
+                ModelPerk(text: "Очень быстрая", icon: "bolt.fill"),
+                ModelPerk(text: "Для простых вопросов", icon: "questionmark.bubble.fill"),
+                ModelPerk(text: "Попроще умом", icon: "exclamationmark.triangle.fill", isDrawback: true)
+            ]
+        } else if id.hasPrefix("qwen3-coder") {
+            perks += [
+                ModelPerk(text: "Лучшая для кода", icon: "chevron.left.forwardslash.chevron.right"),
+                ModelPerk(text: "Быстрая", icon: "bolt.fill"),
+                ModelPerk(text: "Большие файлы", icon: "doc.text.fill")
+            ]
+        } else if id.hasPrefix("gemma") || id.contains("gemma") {
+            perks += [
+                ModelPerk(text: "Живой язык", icon: "text.quote"),
+                ModelPerk(text: "Тексты и переводы", icon: "globe"),
+                ModelPerk(text: "Длинные разговоры", icon: "text.bubble.fill")
+            ]
+        } else if id.hasPrefix("gpt-oss") {
+            perks += [
+                ModelPerk(text: "Быстрая", icon: "bolt.fill"),
+                ModelPerk(text: "Сильная логика", icon: "function"),
+                ModelPerk(text: "Всегда рассуждает", icon: "brain")
+            ]
+        } else if id.hasPrefix("deepseek-r1") {
+            perks += [
+                ModelPerk(text: "Математика и логика", icon: "function"),
+                ModelPerk(text: "Подробные рассуждения", icon: "brain"),
+                ModelPerk(text: "Медленная", icon: "tortoise.fill", isDrawback: true)
+            ]
+        }
+        return perks
+    }
+}
+
+/// Lays chips out in rows, moving to the next row when one is full.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var widest: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            widest = max(widest, x - spacing)
+            rowHeight = max(rowHeight, size.height)
+        }
+        return CGSize(width: proposal.width ?? widest, height: subviews.isEmpty ? 0 : y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
     }
 }

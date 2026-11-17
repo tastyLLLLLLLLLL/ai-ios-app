@@ -37,6 +37,8 @@ struct ChatView: View {
                     .transition(.opacity)
             }
         }
+        .contentShape(Rectangle())
+        .simultaneousGesture(TapGesture().onEnded { inputFocused = false })
         .animation(.easeInOut(duration: 0.3), value: messages.isEmpty)
         .animation(.easeInOut(duration: 0.25), value: model.currentID)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

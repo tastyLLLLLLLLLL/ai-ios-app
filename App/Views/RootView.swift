@@ -470,13 +470,10 @@ private struct DrawerPush: ViewModifier {
         if light {
             content.offset(x: width * 0.12 * progress)
         } else {
+            // No mask here: clipping the screen cut off strips at the top and bottom for a moment.
             content
                 .scaleEffect(1 - 0.06 * progress, anchor: .trailing)
                 .offset(x: width * 0.18 * progress)
-                .mask {
-                    RoundedRectangle(cornerRadius: 44 * progress, style: .continuous)
-                        .ignoresSafeArea()
-                }
         }
     }
 }

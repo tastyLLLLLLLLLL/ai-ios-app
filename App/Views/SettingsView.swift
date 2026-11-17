@@ -277,10 +277,45 @@ struct SettingsView: View {
 
             Divider()
 
+            Text("Фон")
+                .font(.subheadline.weight(.medium))
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(BackgroundStyle.allCases) { style in
+                        let isSelected = style == theme.backgroundStyle
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.4)) { theme.setBackground(style) }
+                        } label: {
+                            VStack(spacing: 5) {
+                                BackgroundPreview(style: style)
+                                    .frame(width: 58, height: 86)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .strokeBorder(isSelected ? Theme.tint : Color.primary.opacity(0.1), lineWidth: isSelected ? 2 : 1)
+                                    }
+                                    .scaleEffect(isSelected ? 1 : 0.94)
+                                    .animation(.spring(response: 0.4, dampingFraction: 0.6), value: isSelected)
+                                Text(style.title)
+                                    .font(.caption2.weight(isSelected ? .semibold : .regular))
+                                    .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                            }
+                        }
+                        .buttonStyle(PressableStyle(scale: 0.92))
+                        .accessibilityLabel("Фон \(style.title)")
+                    }
+                }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 2)
+            }
+            .sensoryFeedback(.selection, trigger: theme.backgroundStyle)
+
+            Divider()
+
             Text("Иконка приложения")
                 .font(.subheadline.weight(.medium))
             iconRow(title: "Под цвет темы", options: AppIconOption.themed)
-            iconRow(title: "Рисованные", options: AppIconOption.illustrated)
+            iconRow(title: "Стили", options: AppIconOption.styled)
 
         }
     }
@@ -299,7 +334,7 @@ struct SettingsView: View {
                             theme.setIcon(option.id)
                         } label: {
                             VStack(spacing: 5) {
-                                Image("IconPreview-\(option.id)")
+                                Image(AppIconOption.previewName(for: option.id))
                                     .resizable()
                                     .frame(width: 56, height: 56)
                                     .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
@@ -449,5 +484,19 @@ private struct SettingsNote: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Small still picture of a background style for the picker.
+private struct BackgroundPreview: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let style: BackgroundStyle
+
+    var body: some View {
+        let dark = colorScheme == .dark
+        ZStack {
+            dark ? Color(red: 0.035, green: 0.035, blue: 0.07) : Color(red: 0.965, green: 0.96, blue: 0.985)
+            PatternBackground(style: style, dark: dark, animated: false)
+        }
     }
 }

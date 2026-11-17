@@ -33,18 +33,29 @@ struct AppIconOption: Identifiable {
     let id: String
     let name: String
 
-    /// Pixel-art pictures, in addition to the pixel monster in each colour theme.
-    static let illustrated: [AppIconOption] = [
-        AppIconOption(id: "cat", name: "Котик"),
-        AppIconOption(id: "robot", name: "Робот"),
-        AppIconOption(id: "alien", name: "Пришелец"),
-        AppIconOption(id: "heart", name: "Сердце"),
-        AppIconOption(id: "rocket", name: "Ракета")
+    /// The same logo drawn in different styles, like Telegram's alternative icons.
+    static let styled: [AppIconOption] = [
+        AppIconOption(id: "pixel", name: "Пиксели"),
+        AppIconOption(id: "neon", name: "Неон"),
+        AppIconOption(id: "minimal", name: "Минимал"),
+        AppIconOption(id: "dark", name: "Тёмная"),
+        AppIconOption(id: "glass", name: "Стекло"),
+        AppIconOption(id: "outline", name: "Контур")
     ]
 
     static let themed: [AppIconOption] = Palette.all.map { AppIconOption(id: $0.id, name: $0.name) }
 
-    static let all = themed + illustrated
+    static let all = themed + styled
+
+    /// Icon set name in the app bundle; nil is the main icon. The "V2" names are new so iOS
+    /// does not show a picture it cached for an older icon with the same name.
+    static func alternateName(for id: String) -> String? {
+        id == Palette.all[0].id ? nil : "AppIconV2-\(id)"
+    }
+
+    static func previewName(for id: String) -> String {
+        "IconPreviewV2-\(id)"
+    }
 }
 
 enum AppearanceMode: String, CaseIterable, Identifiable {
@@ -79,11 +90,13 @@ final class ThemeStore {
     private static let paletteKey = "themePalette"
     private static let appearanceKey = "themeAppearance"
     private static let iconKey = "themeIcon"
+    private static let backgroundKey = "themeBackground"
 
     private(set) var palette: Palette
     private(set) var appearance: AppearanceMode
     /// Palette id of the home-screen icon in use.
     private(set) var iconID: String
+    private(set) var backgroundStyle: BackgroundStyle
 
     private init() {
         let defaults = UserDefaults.standard
@@ -91,23 +104,32 @@ final class ThemeStore {
         palette = Palette.all.first { $0.id == savedPalette } ?? Palette.all[0]
         appearance = AppearanceMode(rawValue: defaults.string(forKey: Self.appearanceKey) ?? "") ?? .system
         iconID = defaults.string(forKey: Self.iconKey) ?? Palette.all[0].id
+        backgroundStyle = BackgroundStyle(rawValue: defaults.string(forKey: Self.backgroundKey) ?? "") ?? .aurora
         // An icon from an older version may no longer exist.
         if !AppIconOption.all.contains(where: { $0.id == iconID }) {
             iconID = Palette.all[0].id
             defaults.set(iconID, forKey: Self.iconKey)
-            Task { @MainActor in
-                if UIApplication.shared.alternateIconName != nil {
-                    UIApplication.shared.setAlternateIconName(nil) { _ in }
-                }
+        }
+        // Older versions used other icon names; point the home screen at the current picture.
+        let expected = AppIconOption.alternateName(for: iconID)
+        Task { @MainActor in
+            if UIApplication.shared.supportsAlternateIcons, UIApplication.shared.alternateIconName != expected {
+                UIApplication.shared.setAlternateIconName(expected) { _ in }
             }
         }
+    }
+
+    @MainActor
+    func setBackground(_ style: BackgroundStyle) {
+        backgroundStyle = style
+        UserDefaults.standard.set(style.rawValue, forKey: Self.backgroundKey)
     }
 
     /// Changes the app icon on the home screen. iOS confirms the change with its own message.
     @MainActor
     func setIcon(_ id: String) {
         guard AppIconOption.all.contains(where: { $0.id == id }), id != iconID else { return }
-        let name: String? = id == Palette.all[0].id ? nil : "AppIcon-\(id)"
+        let name = AppIconOption.alternateName(for: id)
         guard UIApplication.shared.supportsAlternateIcons else { return }
         iconID = id
         UserDefaults.standard.set(id, forKey: Self.iconKey)
@@ -203,7 +225,10 @@ struct AuroraBackground: View {
         ZStack {
             (dark ? Color(red: 0.035, green: 0.035, blue: 0.07) : Color(red: 0.965, green: 0.96, blue: 0.985))
 
-            if MotionStore.shared.lightMode {
+            if ThemeStore.shared.backgroundStyle != .aurora {
+                PatternBackground(style: ThemeStore.shared.backgroundStyle, dark: dark, animated: Motion.isRunning)
+                    .scaleEffect(scale)
+            } else if MotionStore.shared.lightMode {
                 lightGlows(dark: dark, scale: scale)
             } else {
                 // Full design: soft blurred glows that drift slowly.
@@ -409,6 +434,205 @@ extension View {
                 transaction.animation = nil
                 transaction.disablesAnimations = true
             }
+        }
+    }
+}
+
+// MARK: - Background styles
+
+enum BackgroundStyle: String, CaseIterable, Identifiable {
+    case aurora
+    case stars
+    case waves
+    case grid
+    case gradient
+    case bokeh
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .aurora: return "Сияние"
+        case .stars: return "Звёзды"
+        case .waves: return "Волны"
+        case .grid: return "Ретро"
+        case .gradient: return "Градиент"
+        case .bokeh: return "Боке"
+        }
+    }
+}
+
+/// Backgrounds drawn in one Canvas pass, without blur, so they stay cheap even when moving.
+/// Colours come from the current theme; with motion off they are drawn as a still frame.
+struct PatternBackground: View {
+    let style: BackgroundStyle
+    let dark: Bool
+    let animated: Bool
+
+    var body: some View {
+        if animated {
+            TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { context in
+                canvas(time: context.date.timeIntervalSinceReferenceDate)
+            }
+        } else {
+            canvas(time: 0)
+        }
+    }
+
+    private func canvas(time: Double) -> some View {
+        let colors = (Theme.primary, Theme.tint, Theme.tertiary)
+        let dark = dark
+        let style = style
+        return Canvas { context, size in
+            switch style {
+            case .aurora:
+                PatternBackground.glows(&context, size, colors, dark)
+            case .stars:
+                PatternBackground.stars(&context, size, colors, dark, time)
+            case .waves:
+                PatternBackground.waves(&context, size, colors, dark, time)
+            case .grid:
+                PatternBackground.grid(&context, size, colors, dark, time)
+            case .gradient:
+                PatternBackground.gradient(&context, size, colors, dark, time)
+            case .bokeh:
+                PatternBackground.bokeh(&context, size, colors, dark, time)
+            }
+        }
+        .ignoresSafeArea()
+    }
+
+    private typealias Colors = (Color, Color, Color)
+
+    /// Deterministic pseudo-random numbers, so stars and circles keep their places.
+    private struct Seeded {
+        var state: UInt64
+        mutating func next() -> Double {
+            state = state &* 6364136223846793005 &+ 1442695040888963407
+            return Double(state >> 11) / Double(1 << 53)
+        }
+    }
+
+    private static func radial(_ context: inout GraphicsContext, _ color: Color, center: CGPoint, radius: CGFloat) {
+        let rect = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+        context.fill(
+            Path(ellipseIn: rect),
+            with: .radialGradient(Gradient(colors: [color, color.opacity(0)]), center: center, startRadius: 0, endRadius: radius)
+        )
+    }
+
+    fileprivate static func glows(_ context: inout GraphicsContext, _ size: CGSize, _ colors: Colors, _ dark: Bool) {
+        radial(&context, colors.0.opacity(dark ? 0.42 : 0.26), center: CGPoint(x: size.width * 0.1, y: size.width * 0.15), radius: size.width * 0.95)
+        radial(&context, colors.2.opacity(dark ? 0.26 : 0.2), center: CGPoint(x: size.width * 0.95, y: size.height * 0.45), radius: size.width * 0.9)
+        radial(&context, colors.1.opacity(dark ? 0.3 : 0.18), center: CGPoint(x: size.width * 0.25, y: size.height * 0.92), radius: size.width)
+    }
+
+    fileprivate static func stars(_ context: inout GraphicsContext, _ size: CGSize, _ colors: Colors, _ dark: Bool, _ time: Double) {
+        radial(&context, colors.0.opacity(dark ? 0.35 : 0.18), center: CGPoint(x: 0, y: 0), radius: size.width * 1.1)
+        radial(&context, colors.2.opacity(dark ? 0.22 : 0.14), center: CGPoint(x: size.width, y: size.height), radius: size.width * 1.1)
+        var random = Seeded(state: 42)
+        let starColor = dark ? Color.white : colors.1
+        for _ in 0..<140 {
+            let x = random.next() * size.width
+            let y = random.next() * size.height
+            let radius = 0.5 + random.next() * 1.6
+            let phase = random.next() * .pi * 2
+            let speed = 0.6 + random.next() * 1.8
+            let twinkle = 0.35 + 0.65 * (0.5 + 0.5 * sin(time * speed + phase))
+            let rect = CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)
+            context.fill(Path(ellipseIn: rect), with: .color(starColor.opacity((dark ? 0.9 : 0.6) * twinkle)))
+            if radius > 1.8 {
+                radial(&context, colors.1.opacity(0.35 * twinkle), center: CGPoint(x: x, y: y), radius: radius * 6)
+            }
+        }
+    }
+
+    fileprivate static func waves(_ context: inout GraphicsContext, _ size: CGSize, _ colors: Colors, _ dark: Bool, _ time: Double) {
+        radial(&context, colors.0.opacity(dark ? 0.3 : 0.16), center: CGPoint(x: size.width * 0.2, y: size.height * 0.1), radius: size.width)
+        let layers: [(Color, Double, Double, Double)] = [
+            (colors.0, 0.56, 0.9, 0.25),
+            (colors.1, 0.66, 1.3, -0.35),
+            (colors.2, 0.76, 1.7, 0.45)
+        ]
+        for (index, layer) in layers.enumerated() {
+            var path = Path()
+            let base = size.height * layer.1
+            let amplitude = size.height * 0.035
+            path.move(to: CGPoint(x: 0, y: size.height))
+            var x: CGFloat = 0
+            while x <= size.width + 8 {
+                let angle = Double(x / size.width) * .pi * 2 * layer.2 + time * layer.3 + Double(index)
+                path.addLine(to: CGPoint(x: x, y: base + amplitude * sin(angle)))
+                x += 8
+            }
+            path.addLine(to: CGPoint(x: size.width, y: size.height))
+            path.closeSubpath()
+            context.fill(path, with: .linearGradient(
+                Gradient(colors: [layer.0.opacity(dark ? 0.32 : 0.2), layer.0.opacity(dark ? 0.08 : 0.04)]),
+                startPoint: CGPoint(x: 0, y: base),
+                endPoint: CGPoint(x: 0, y: size.height)
+            ))
+        }
+    }
+
+    fileprivate static func grid(_ context: inout GraphicsContext, _ size: CGSize, _ colors: Colors, _ dark: Bool, _ time: Double) {
+        let horizon = size.height * 0.58
+        context.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: horizon)), with: .linearGradient(
+            Gradient(colors: [colors.0.opacity(dark ? 0.05 : 0.02), colors.0.opacity(dark ? 0.35 : 0.18)]),
+            startPoint: .zero, endPoint: CGPoint(x: 0, y: horizon)
+        ))
+        radial(&context, colors.2.opacity(dark ? 0.55 : 0.35), center: CGPoint(x: size.width / 2, y: horizon), radius: size.width * 0.55)
+        let lineColor = colors.1.opacity(dark ? 0.55 : 0.35)
+        let vanishing = CGPoint(x: size.width / 2, y: horizon)
+        for i in -10...10 {
+            var path = Path()
+            path.move(to: vanishing)
+            path.addLine(to: CGPoint(x: size.width / 2 + CGFloat(i) * size.width * 0.18, y: size.height))
+            context.stroke(path, with: .color(lineColor.opacity(0.7)), lineWidth: 1)
+        }
+        let rows = 12
+        for k in 0..<rows {
+            var t = (Double(k) / Double(rows) + time * 0.06).truncatingRemainder(dividingBy: 1)
+            if t < 0 { t += 1 }
+            let y = horizon + (size.height - horizon) * CGFloat(t * t)
+            var path = Path()
+            path.move(to: CGPoint(x: 0, y: y))
+            path.addLine(to: CGPoint(x: size.width, y: y))
+            context.stroke(path, with: .color(lineColor.opacity(0.25 + 0.75 * t)), lineWidth: 1)
+        }
+    }
+
+    fileprivate static func gradient(_ context: inout GraphicsContext, _ size: CGSize, _ colors: Colors, _ dark: Bool, _ time: Double) {
+        let angle = time * 0.05
+        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+        let reach = max(size.width, size.height) * 0.75
+        let start = CGPoint(x: center.x - CGFloat(cos(angle)) * reach, y: center.y - CGFloat(sin(angle)) * reach)
+        let end = CGPoint(x: center.x + CGFloat(cos(angle)) * reach, y: center.y + CGFloat(sin(angle)) * reach)
+        let alpha = dark ? 0.38 : 0.22
+        context.fill(Path(CGRect(origin: .zero, size: size)), with: .linearGradient(
+            Gradient(colors: [colors.0.opacity(alpha), colors.1.opacity(alpha * 0.7), colors.2.opacity(alpha)]),
+            startPoint: start, endPoint: end
+        ))
+    }
+
+    fileprivate static func bokeh(_ context: inout GraphicsContext, _ size: CGSize, _ colors: Colors, _ dark: Bool, _ time: Double) {
+        var random = Seeded(state: 7)
+        let palette = [colors.0, colors.1, colors.2]
+        for index in 0..<16 {
+            let baseX = random.next()
+            let baseY = random.next()
+            let radius = size.width * (0.08 + random.next() * 0.16)
+            let speed = 0.008 + random.next() * 0.018
+            let phase = random.next() * .pi * 2
+            var y = (baseY - time * speed).truncatingRemainder(dividingBy: 1.2)
+            if y < -0.2 { y += 1.2 }
+            let x = baseX + 0.04 * sin(time * 0.3 + phase)
+            radial(
+                &context,
+                palette[index % 3].opacity(dark ? 0.32 : 0.2),
+                center: CGPoint(x: x * size.width, y: y * size.height),
+                radius: radius
+            )
         }
     }
 }

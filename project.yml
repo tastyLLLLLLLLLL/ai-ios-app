@@ -48,7 +48,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.personal.pocketai
         TARGETED_DEVICE_FAMILY: "1,2"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: "AppIcon-ruby AppIcon-sunset AppIcon-forest AppIcon-lilac AppIcon-graphite AppIcon-cat AppIcon-robot AppIcon-alien AppIcon-heart AppIcon-rocket"
+        ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: "AppIconV2-ruby AppIconV2-sunset AppIconV2-forest AppIconV2-lilac AppIconV2-graphite AppIconV2-pixel AppIconV2-neon AppIconV2-minimal AppIconV2-dark AppIconV2-glass AppIconV2-outline"
         ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: "YES"
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         ENABLE_USER_SCRIPT_SANDBOXING: "NO"
