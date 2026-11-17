@@ -582,7 +582,7 @@ struct PatternBackground: View {
         .ignoresSafeArea()
     }
 
-    private typealias Colors = (Color, Color, Color)
+    fileprivate typealias Colors = (Color, Color, Color)
 
     /// Deterministic pseudo-random numbers, so stars and circles keep their places.
     private struct Seeded {
