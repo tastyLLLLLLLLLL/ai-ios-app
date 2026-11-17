@@ -27,7 +27,9 @@ jobs:
       - name: Check that the model download links work
         run: |
           status=0
-          for url in $(grep -o 'https://huggingface.co[^"]*' App/Models/ModelCatalog.swift); do
+          urls="$(grep -o 'https://huggingface.co[^"]*' App/Models/ModelCatalog.swift)
+          $(grep -o '\$HF/[^" ]*' server/setup.sh | sed 's#\$HF#https://huggingface.co#')"
+          for url in $urls; do
             headers=$(curl -sI "$url")
             code=$(echo "$headers" | head -1 | awk '{print $2}')
             size=$(echo "$headers" | grep -i '^x-linked-size' | awk '{print $2}' | tr -d '\r')

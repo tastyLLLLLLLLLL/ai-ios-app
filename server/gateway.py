@@ -1,0 +1,579 @@
+"""Pocket AI server gateway.
+
+One password-protected entry point for the iPhone app:
+  * text and code models run in Ollama (streamed chat);
+  * images, video and music are jobs for ComfyUI, tracked here with progress;
+  * finished jobs can be announced through ntfy.
+
+Runs on port 8080, which RunPod publishes as https://<pod id>-8080.proxy.runpod.net.
+"""
+
+import asyncio
+import json
+import os
+import random
+import subprocess
+import time
+import uuid
+from pathlib import Path
+
+from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
+
+ROOT = Path(os.environ.get("POCKETAI_ROOT", "/workspace/ai-server"))
+COMFY_DIR = Path(os.environ.get("POCKETAI_COMFY", "/workspace/ComfyUI"))
+OLLAMA = "http://127.0.0.1:11434"
+COMFY = "http://127.0.0.1:8188"
+CLIENT_ID = "pocket-ai-gateway"
+JOBS_FILE = ROOT / "jobs.json"
+
+PASSWORD = (ROOT / "password.txt").read_text().strip()
+NTFY_TOPIC = (ROOT / "ntfy.txt").read_text().strip() if (ROOT / "ntfy.txt").exists() else ""
+
+# ---------------------------------------------------------------------------
+# Catalog
+# ---------------------------------------------------------------------------
+
+# Text and code models. Matched by name prefix against what Ollama has installed.
+TEXT_MODELS = [
+    {"match": "qwen3.6", "name": "Qwen3.6 27B", "category": "text",
+     "summary": "Самая сильная универсальная модель, хорошо знает русский."},
+    {"match": "qwen3:32b", "name": "Qwen3 32B", "category": "text",
+     "summary": "Сильная универсальная модель, хорошо знает русский, умеет рассуждать."},
+    {"match": "gemma4", "name": "Gemma 4 31B", "category": "text",
+     "summary": "Модель Google: живой язык, хорошо держит длинные разговоры."},
+    {"match": "gemma3:27b", "name": "Gemma 3 27B", "category": "text",
+     "summary": "Модель Google: живой язык, хорошо держит длинные разговоры."},
+    {"match": "gpt-oss", "name": "gpt-oss 20B", "category": "text",
+     "summary": "Модель OpenAI с открытыми весами: быстрая, сильна в рассуждениях."},
+    {"match": "deepseek-r1", "name": "DeepSeek R1 32B", "category": "text",
+     "summary": "Подробно рассуждает перед ответом, сильна в логике и математике."},
+    {"match": "hf.co/mlabonne/gemma-3-27b-it-abliterated", "name": "Gemma 3 27B без цензуры", "category": "text",
+     "summary": "Та же Gemma 3 со снятыми ограничениями: не отказывается отвечать.", "uncensored": True},
+    {"match": "qwen3-coder", "name": "Qwen3-Coder 30B", "category": "code",
+     "summary": "Специально для программирования, быстрая."},
+]
+
+# Media models: which files must exist for each one.
+MEDIA_MODELS = [
+    {"id": "flux-dev", "name": "FLUX.1 dev", "kind": "image",
+     "summary": "Лучшее качество и фотореализм.",
+     "files": ["checkpoints/flux1-dev-fp8.safetensors"]},
+    {"id": "flux-schnell", "name": "FLUX.1 schnell", "kind": "image",
+     "summary": "Быстрая версия FLUX: картинка за несколько секунд.",
+     "files": ["checkpoints/flux1-schnell-fp8.safetensors"]},
+    {"id": "sdxl", "name": "SDXL", "kind": "image",
+     "summary": "Лёгкая и быстрая, понимает описания стилей.",
+     "files": ["checkpoints/sd_xl_base_1.0.safetensors"]},
+    {"id": "wan22", "name": "Wan 2.2", "kind": "video",
+     "summary": "Видео по описанию, сильный фотореализм. Ролик считается несколько минут.",
+     "files": ["diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",
+               "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+               "vae/wan2.2_vae.safetensors"]},
+    {"id": "ace-step", "name": "ACE-Step", "kind": "music",
+     "summary": "Песни с вокалом по описанию стиля и тексту.",
+     "files": ["checkpoints/ace_step_v1_3.5b.safetensors"]},
+]
+
+
+def media_available(model):
+    return all((COMFY_DIR / "models" / f).exists() for f in model["files"])
+
+
+def describe_text_model(tag):
+    for entry in TEXT_MODELS:
+        if tag.startswith(entry["match"]):
+            return {
+                "id": tag,
+                "name": entry["name"],
+                "category": entry["category"],
+                "summary": entry["summary"],
+                "uncensored": entry.get("uncensored", False),
+            }
+    return {"id": tag, "name": tag, "category": "text", "summary": "Модель с сервера.", "uncensored": False}
+
+
+# ---------------------------------------------------------------------------
+# ComfyUI workflows
+# ---------------------------------------------------------------------------
+
+def image_workflow(model_id, prompt, negative, width, height, seed):
+    ckpt = {
+        "flux-dev": "flux1-dev-fp8.safetensors",
+        "flux-schnell": "flux1-schnell-fp8.safetensors",
+        "sdxl": "sd_xl_base_1.0.safetensors",
+    }[model_id]
+    flux = model_id.startswith("flux")
+    steps = {"flux-dev": 20, "flux-schnell": 4, "sdxl": 30}[model_id]
+    wf = {
+        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": ckpt}},
+        "2": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["1", 1]}},
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"text": negative, "clip": ["1", 1]}},
+        "4": {"class_type": "EmptySD3LatentImage" if flux else "EmptyLatentImage",
+              "inputs": {"width": width, "height": height, "batch_size": 1}},
+        "5": {"class_type": "KSampler", "inputs": {
+            "seed": seed, "steps": steps, "cfg": 1.0 if flux else 7.0,
+            "sampler_name": "euler" if flux else "dpmpp_2m",
+            "scheduler": "simple" if flux else "karras",
+            "denoise": 1.0, "model": ["1", 0],
+            "positive": ["8", 0] if model_id == "flux-dev" else ["2", 0],
+            "negative": ["3", 0], "latent_image": ["4", 0]}},
+        "6": {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}},
+        "7": {"class_type": "SaveImage", "inputs": {"filename_prefix": "pocketai/image", "images": ["6", 0]}},
+    }
+    if model_id == "flux-dev":
+        wf["8"] = {"class_type": "FluxGuidance", "inputs": {"guidance": 3.5, "conditioning": ["2", 0]}}
+    return wf
+
+
+def video_workflow(prompt, negative, width, height, seconds, seed):
+    frames = {2: 49, 3: 73, 5: 121}.get(seconds, 73)
+    return {
+        "1": {"class_type": "UNETLoader", "inputs": {
+            "unet_name": "wan2.2_ti2v_5B_fp16.safetensors", "weight_dtype": "default"}},
+        "2": {"class_type": "CLIPLoader", "inputs": {
+            "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan", "device": "default"}},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": "wan2.2_vae.safetensors"}},
+        "4": {"class_type": "ModelSamplingSD3", "inputs": {"shift": 8.0, "model": ["1", 0]}},
+        "5": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["2", 0]}},
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"text": negative, "clip": ["2", 0]}},
+        "7": {"class_type": "Wan22ImageToVideoLatent", "inputs": {
+            "vae": ["3", 0], "width": width, "height": height, "length": frames, "batch_size": 1}},
+        "8": {"class_type": "KSampler", "inputs": {
+            "seed": seed, "steps": 30, "cfg": 5.0, "sampler_name": "uni_pc", "scheduler": "simple",
+            "denoise": 1.0, "model": ["4", 0], "positive": ["5", 0], "negative": ["6", 0],
+            "latent_image": ["7", 0]}},
+        "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
+        "10": {"class_type": "CreateVideo", "inputs": {"images": ["9", 0], "fps": 24}},
+        "11": {"class_type": "SaveVideo", "inputs": {
+            "video": ["10", 0], "filename_prefix": "pocketai/video", "format": "auto", "codec": "auto"}},
+    }
+
+
+def music_workflow(tags, lyrics, seconds, seed):
+    return {
+        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "ace_step_v1_3.5b.safetensors"}},
+        "2": {"class_type": "TextEncodeAceStepAudio", "inputs": {
+            "clip": ["1", 1], "tags": tags, "lyrics": lyrics, "lyrics_strength": 0.99}},
+        "3": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["2", 0]}},
+        "4": {"class_type": "EmptyAceStepLatentAudio", "inputs": {"seconds": seconds, "batch_size": 1}},
+        "5": {"class_type": "ModelSamplingSD3", "inputs": {"shift": 5.0, "model": ["1", 0]}},
+        "6": {"class_type": "KSampler", "inputs": {
+            "seed": seed, "steps": 50, "cfg": 5.0, "sampler_name": "euler", "scheduler": "simple",
+            "denoise": 1.0, "model": ["5", 0], "positive": ["2", 0], "negative": ["3", 0],
+            "latent_image": ["4", 0]}},
+        "7": {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["6", 0], "vae": ["1", 2]}},
+        "8": {"class_type": "SaveAudio", "inputs": {"audio": ["7", 0], "filename_prefix": "pocketai/music"}},
+    }
+
+
+DEFAULT_NEGATIVE = "low quality, blurry, distorted, watermark, text artifacts, deformed"
+
+# ---------------------------------------------------------------------------
+# Jobs
+# ---------------------------------------------------------------------------
+
+jobs = {}          # job id -> job dict
+prompt_to_job = {}  # ComfyUI prompt id -> job id
+
+
+def save_jobs():
+    try:
+        JOBS_FILE.write_text(json.dumps(list(jobs.values()), ensure_ascii=False))
+    except OSError:
+        pass
+
+
+def load_jobs():
+    if not JOBS_FILE.exists():
+        return
+    try:
+        for job in json.loads(JOBS_FILE.read_text()):
+            # Anything unfinished was lost when the server restarted.
+            if job["status"] in ("queued", "running"):
+                job["status"] = "failed"
+                job["error"] = "Сервер перезапускался, задача прервана."
+            jobs[job["id"]] = job
+    except (OSError, ValueError, KeyError):
+        pass
+
+
+def public_job(job):
+    return {k: v for k, v in job.items() if k != "prompt_id"}
+
+
+async def notify(title, message):
+    """Push notification through ntfy (JSON form keeps Cyrillic intact). Never includes the prompt."""
+    if not NTFY_TOPIC:
+        return
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=10)) as session:
+            await session.post("https://ntfy.sh/", json={
+                "topic": NTFY_TOPIC, "title": title, "message": message, "tags": ["sparkles"],
+            })
+    except Exception:
+        pass
+
+
+KIND_DONE = {"image": "Картинка готова", "video": "Видео готово", "music": "Музыка готова"}
+
+
+async def finish_job(job, outputs=None, error=None):
+    job["finished"] = time.time()
+    if error:
+        job["status"] = "failed"
+        job["error"] = error
+        await notify("Pocket AI", "Не получилось создать: " + error[:200])
+    else:
+        job["status"] = "done"
+        job["progress"] = 1.0
+        job["outputs"] = outputs or []
+        await notify("Pocket AI", KIND_DONE.get(job["kind"], "Готово") + ". Откройте приложение.")
+    save_jobs()
+
+
+def collect_outputs(history_entry):
+    files = []
+    for node_output in history_entry.get("outputs", {}).values():
+        for value in node_output.values():
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict) and "filename" in item and item.get("type", "output") == "output":
+                        files.append({"filename": item["filename"], "subfolder": item.get("subfolder", "")})
+    return files
+
+
+async def watch_comfy(app):
+    """Follows ComfyUI progress over its websocket and finishes jobs when their prompt completes."""
+    while True:
+        try:
+            async with ClientSession() as session:
+                async with session.ws_connect(f"{COMFY}/ws?clientId={CLIENT_ID}", heartbeat=30) as ws:
+                    async for msg in ws:
+                        if msg.type != WSMsgType.TEXT:
+                            continue
+                        event = json.loads(msg.data)
+                        data = event.get("data", {})
+                        job = jobs.get(prompt_to_job.get(data.get("prompt_id", "")))
+                        if not job:
+                            continue
+                        kind = event.get("type")
+                        if kind == "execution_start":
+                            job["status"] = "running"
+                        elif kind == "progress" and data.get("max"):
+                            job["status"] = "running"
+                            job["progress"] = round(min(0.99, data["value"] / data["max"]), 3)
+                        elif kind == "execution_error":
+                            await finish_job(job, error=str(data.get("exception_message", "ошибка ComfyUI"))[:500])
+                        elif kind == "execution_success" or (kind == "executing" and data.get("node") is None):
+                            await complete_from_history(session, job)
+        except Exception:
+            await asyncio.sleep(3)
+
+
+async def complete_from_history(session, job):
+    if job["status"] in ("done", "failed"):
+        return
+    async with session.get(f"{COMFY}/history/{job['prompt_id']}") as response:
+        history = await response.json()
+    entry = history.get(job["prompt_id"])
+    if not entry:
+        return
+    outputs = collect_outputs(entry)
+    if outputs:
+        await finish_job(job, outputs=outputs)
+    else:
+        await finish_job(job, error="ComfyUI не вернул файл.")
+
+
+async def poll_unfinished(app):
+    """Safety net in case a websocket event was missed."""
+    while True:
+        await asyncio.sleep(15)
+        pending = [j for j in jobs.values() if j["status"] in ("queued", "running") and j.get("prompt_id")]
+        if not pending:
+            continue
+        try:
+            async with ClientSession(timeout=ClientTimeout(total=20)) as session:
+                for job in pending:
+                    await complete_from_history(session, job)
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# GPU memory: text models and media models share one graphics card
+# ---------------------------------------------------------------------------
+
+async def unload_text_models():
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=30)) as session:
+            async with session.get(f"{OLLAMA}/api/ps") as response:
+                running = (await response.json()).get("models", [])
+            for model in running:
+                await session.post(f"{OLLAMA}/api/generate", json={"model": model["name"], "keep_alive": 0})
+    except Exception:
+        pass
+
+
+async def free_media_memory():
+    if any(j["status"] in ("queued", "running") for j in jobs.values()):
+        return
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=15)) as session:
+            await session.post(f"{COMFY}/free", json={"unload_models": True, "free_memory": True})
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Prompt translation: image, video and music models understand English best
+# ---------------------------------------------------------------------------
+
+TRANSLATORS = ["gemma4", "gemma3:27b", "qwen3.6", "qwen3:32b", "gpt-oss"]
+
+
+def has_cyrillic(text):
+    return any("а" <= ch.lower() <= "я" or ch.lower() == "ё" for ch in text)
+
+
+async def translate(text, purpose):
+    """Translates a Russian description into English with an installed text model; returns the original on failure."""
+    if not text or not has_cyrillic(text):
+        return text
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=120)) as session:
+            async with session.get(f"{OLLAMA}/api/tags") as response:
+                installed = [m["name"] for m in (await response.json()).get("models", [])]
+            model = next((name for prefix in TRANSLATORS for name in installed if name.startswith(prefix)), None)
+            if not model:
+                return text
+            payload = {
+                "model": model,
+                "stream": False,
+                "think": False,
+                "keep_alive": 0,
+                "messages": [
+                    {"role": "system", "content":
+                        f"Translate the user's text into English as a {purpose}. "
+                        "Keep every detail. Reply with the translation only, without quotes or comments."},
+                    {"role": "user", "content": text},
+                ],
+            }
+            async with session.post(f"{OLLAMA}/api/chat", json=payload) as response:
+                if response.status != 200:
+                    payload.pop("think")
+                    async with session.post(f"{OLLAMA}/api/chat", json=payload) as retry:
+                        result = await retry.json()
+                else:
+                    result = await response.json()
+        answer = result.get("message", {}).get("content", "").strip()
+        if "</think>" in answer:
+            answer = answer.split("</think>", 1)[1].strip()
+        return answer.strip('"').strip() or text
+    except Exception:
+        return text
+
+
+# ---------------------------------------------------------------------------
+# HTTP API
+# ---------------------------------------------------------------------------
+
+@web.middleware
+async def auth(request, handler):
+    if request.path == "/api/ping":
+        return await handler(request)
+    header = request.headers.get("Authorization", "")
+    key = header[7:] if header.startswith("Bearer ") else request.query.get("key", "")
+    if key != PASSWORD:
+        return web.json_response({"error": "Неверный пароль"}, status=401)
+    return await handler(request)
+
+
+async def ping(request):
+    return web.json_response({"ok": True})
+
+
+def gpu_name():
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"],
+                             capture_output=True, text=True, timeout=5).stdout.strip()
+        return out.splitlines()[0] if out else ""
+    except Exception:
+        return ""
+
+
+async def health(request):
+    return web.json_response({"ok": True, "gpu": gpu_name(), "ntfyTopic": NTFY_TOPIC})
+
+
+async def models(request):
+    text = []
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=10)) as session:
+            async with session.get(f"{OLLAMA}/api/tags") as response:
+                for model in (await response.json()).get("models", []):
+                    text.append(describe_text_model(model["name"]))
+    except Exception:
+        pass
+    order = {e["match"]: i for i, e in enumerate(TEXT_MODELS)}
+    text.sort(key=lambda m: next((v for k, v in order.items() if m["id"].startswith(k)), 99))
+    media = [
+        {"id": m["id"], "name": m["name"], "kind": m["kind"], "summary": m["summary"]}
+        for m in MEDIA_MODELS if media_available(m)
+    ]
+    return web.json_response({"text": text, "media": media})
+
+
+async def chat(request):
+    """Streams an Ollama chat answer back to the app as newline-separated JSON."""
+    body = await request.json()
+    await free_media_memory()
+    payload = {
+        "model": body["model"],
+        "messages": body["messages"],
+        "stream": True,
+        "options": body.get("options", {}),
+    }
+    if "think" in body:
+        payload["think"] = body["think"]
+
+    response = web.StreamResponse(headers={"Content-Type": "application/x-ndjson", "Cache-Control": "no-cache"})
+    await response.prepare(request)
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=None, sock_read=600)) as session:
+            async with session.post(f"{OLLAMA}/api/chat", json=payload) as upstream:
+                if upstream.status != 200:
+                    text = await upstream.text()
+                    # Models without thinking reject the "think" option; retry without it.
+                    if "think" in payload and "think" in text.lower():
+                        payload.pop("think")
+                        async with session.post(f"{OLLAMA}/api/chat", json=payload) as retry:
+                            async for line in retry.content:
+                                await response.write(line)
+                    else:
+                        await response.write((json.dumps({"error": text[:500]}) + "\n").encode())
+                else:
+                    async for line in upstream.content:
+                        await response.write(line)
+    except (ConnectionResetError, asyncio.CancelledError):
+        raise
+    except Exception as error:
+        await response.write((json.dumps({"error": str(error)[:300]}) + "\n").encode())
+    await response.write_eof()
+    return response
+
+
+async def create_job(request):
+    body = await request.json()
+    kind = body.get("kind")
+    model_id = body.get("model")
+    model = next((m for m in MEDIA_MODELS if m["id"] == model_id and m["kind"] == kind), None)
+    if not model or not media_available(model):
+        return web.json_response({"error": "Эта модель не установлена на сервере."}, status=400)
+
+    seed = int(body.get("seed") or random.randint(1, 2**31 - 1))
+    prompt = (body.get("prompt") or "").strip()
+    if not prompt:
+        return web.json_response({"error": "Опишите, что нужно создать."}, status=400)
+    if kind == "image":
+        english = await translate(prompt, "detailed prompt for an image generation model")
+        width, height = int(body.get("width", 1024)), int(body.get("height", 1024))
+        workflow = image_workflow(model_id, english, body.get("negative") or DEFAULT_NEGATIVE, width, height, seed)
+    elif kind == "video":
+        english = await translate(prompt, "detailed prompt for a video generation model")
+        width, height = int(body.get("width", 1280)), int(body.get("height", 704))
+        workflow = video_workflow(english, body.get("negative") or DEFAULT_NEGATIVE, width, height,
+                                  int(body.get("seconds", 3)), seed)
+    else:
+        english = await translate(prompt, "comma-separated list of music style tags (genre, mood, instruments, vocals)")
+        workflow = music_workflow(english, body.get("lyrics") or "[instrumental]", int(body.get("seconds", 60)), seed)
+
+    await unload_text_models()
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=30)) as session:
+            async with session.post(f"{COMFY}/prompt", json={"prompt": workflow, "client_id": CLIENT_ID}) as response:
+                result = await response.json(content_type=None)
+                status = response.status
+    except Exception:
+        return web.json_response(
+            {"error": "ComfyUI ещё запускается или не работает. Подождите минуту и попробуйте снова."}, status=503)
+    if status != 200 or "prompt_id" not in result:
+        detail = result.get("error", {}).get("message") if isinstance(result.get("error"), dict) else None
+        errors = result.get("node_errors")
+        message = detail or "ComfyUI отклонил задачу"
+        if errors:
+            message += ": " + json.dumps(errors, ensure_ascii=False)[:400]
+        return web.json_response({"error": message}, status=502)
+
+    job = {
+        "id": uuid.uuid4().hex[:12],
+        "kind": kind,
+        "model": model_id,
+        "modelName": model["name"],
+        "prompt": prompt,
+        "status": "queued",
+        "progress": 0.0,
+        "created": time.time(),
+        "finished": None,
+        "outputs": [],
+        "error": None,
+        "prompt_id": result["prompt_id"],
+    }
+    jobs[job["id"]] = job
+    prompt_to_job[result["prompt_id"]] = job["id"]
+    save_jobs()
+    return web.json_response(public_job(job))
+
+
+async def list_jobs(request):
+    ordered = sorted(jobs.values(), key=lambda j: j["created"], reverse=True)[:100]
+    return web.json_response([public_job(j) for j in ordered])
+
+
+async def delete_job(request):
+    job = jobs.pop(request.match_info["job_id"], None)
+    if job and job["status"] in ("queued", "running"):
+        try:
+            async with ClientSession(timeout=ClientTimeout(total=10)) as session:
+                await session.post(f"{COMFY}/queue", json={"delete": [job.get("prompt_id")]})
+                await session.post(f"{COMFY}/interrupt")
+        except Exception:
+            pass
+    save_jobs()
+    return web.json_response({"ok": True})
+
+
+async def job_file(request):
+    job = jobs.get(request.match_info["job_id"])
+    index = int(request.match_info["index"])
+    if not job or index >= len(job.get("outputs", [])):
+        return web.json_response({"error": "Файл не найден"}, status=404)
+    item = job["outputs"][index]
+    base = (COMFY_DIR / "output").resolve()
+    path = (base / item["subfolder"] / item["filename"]).resolve()
+    if base not in path.parents or not path.exists():
+        return web.json_response({"error": "Файл не найден"}, status=404)
+    return web.FileResponse(path)
+
+
+async def on_startup(app):
+    load_jobs()
+    app["watchers"] = [asyncio.create_task(watch_comfy(app)), asyncio.create_task(poll_unfinished(app))]
+
+
+def main():
+    app = web.Application(middlewares=[auth], client_max_size=64 * 1024 * 1024)
+    app.router.add_get("/api/ping", ping)
+    app.router.add_get("/api/health", health)
+    app.router.add_get("/api/models", models)
+    app.router.add_post("/api/chat", chat)
+    app.router.add_get("/api/jobs", list_jobs)
+    app.router.add_post("/api/jobs", create_job)
+    app.router.add_delete("/api/jobs/{job_id}", delete_job)
+    app.router.add_get("/api/jobs/{job_id}/files/{index}", job_file)
+    app.on_startup.append(on_startup)
+    web.run_app(app, host="0.0.0.0", port=8080, print=None)
+
+
+if __name__ == "__main__":
+    main()
