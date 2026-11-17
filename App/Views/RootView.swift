@@ -93,6 +93,16 @@ struct RootView: View {
                 model.send(prompt, photos: photos)
             }
         }
+        .onOpenURL { url in
+            Task {
+                if await model.server.connect(from: url) {
+                    if model.server.isConnected, let first = model.server.textModels.first, !model.useOnline {
+                        model.chooseOnline(model.server.selectedTextModelID ?? first.id)
+                    }
+                    showModels = true
+                }
+            }
+        }
         .onChange(of: scenePhase) {
             // iOS does not allow GPU work in the background: the answer pauses and continues on return.
             switch scenePhase {

@@ -369,6 +369,7 @@ final class AppModel {
     /// Streams an answer from a text model on the user's server.
     private func streamOnline(_ conversationID: UUID, resume: Bool) async throws {
         guard let modelID = server.selectedTextModelID else { throw ServerError.notConfigured }
+        try await server.ensureRunning()
         if resume {
             // The server cannot continue a half-written answer, so it starts over.
             updateLastMessage(in: conversationID) { $0.text = "" }

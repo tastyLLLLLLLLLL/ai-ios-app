@@ -25,6 +25,7 @@ OLLAMA = "http://127.0.0.1:11434"
 COMFY = "http://127.0.0.1:8188"
 CLIENT_ID = "pocket-ai-gateway"
 JOBS_FILE = ROOT / "jobs.json"
+IDLE_FILE = ROOT / "idle_minutes.txt"
 
 PASSWORD = (ROOT / "password.txt").read_text().strip()
 NTFY_TOPIC = (ROOT / "ntfy.txt").read_text().strip() if (ROOT / "ntfy.txt").exists() else ""
@@ -326,6 +327,59 @@ async def free_media_memory():
 
 
 # ---------------------------------------------------------------------------
+# Saving money: the pod switches itself off after a period without use
+# ---------------------------------------------------------------------------
+
+last_activity = time.time()
+active_chats = 0
+DEFAULT_IDLE_MINUTES = 20
+
+
+def idle_minutes():
+    """Minutes without use before the pod stops itself; 0 means never."""
+    try:
+        return max(0, int(IDLE_FILE.read_text().strip()))
+    except (OSError, ValueError):
+        return DEFAULT_IDLE_MINUTES
+
+
+def touch():
+    global last_activity
+    last_activity = time.time()
+
+
+async def stop_pod(reason):
+    """Stops this RunPod pod. Pods come with runpodctl and a pod-scoped key, so no account key is needed."""
+    pod = os.environ.get("RUNPOD_POD_ID", "")
+    if not pod:
+        return False
+    await notify("Pocket AI", reason)
+    for command in (["runpodctl", "pod", "stop", pod], ["runpodctl", "stop", "pod", pod]):
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            if await process.wait() == 0:
+                return True
+        except FileNotFoundError:
+            return False
+    return False
+
+
+async def watch_idle(app):
+    while True:
+        await asyncio.sleep(60)
+        limit = idle_minutes()
+        busy = active_chats > 0 or any(j["status"] in ("queued", "running") for j in jobs.values())
+        if busy:
+            touch()
+            continue
+        if limit and time.time() - last_activity > limit * 60:
+            if await stop_pod(f"Сервер выключен: им не пользовались {limit} мин. Деньги за работу больше не списываются."):
+                return
+            touch()  # Stop failed; try again after another idle period.
+
+
+# ---------------------------------------------------------------------------
 # Prompt translation: image, video and music models understand English best
 # ---------------------------------------------------------------------------
 
@@ -386,6 +440,7 @@ async def auth(request, handler):
     key = header[7:] if header.startswith("Bearer ") else request.query.get("key", "")
     if key != PASSWORD:
         return web.json_response({"error": "Неверный пароль"}, status=401)
+    touch()
     return await handler(request)
 
 
@@ -426,6 +481,16 @@ async def models(request):
 
 async def chat(request):
     """Streams an Ollama chat answer back to the app as newline-separated JSON."""
+    global active_chats
+    active_chats += 1
+    try:
+        return await stream_chat(request)
+    finally:
+        active_chats -= 1
+        touch()
+
+
+async def stream_chat(request):
     body = await request.json()
     await free_media_memory()
     payload = {
@@ -556,9 +621,37 @@ async def job_file(request):
     return web.FileResponse(path)
 
 
+async def get_settings(request):
+    return web.json_response({"idleMinutes": idle_minutes()})
+
+
+async def set_settings(request):
+    body = await request.json()
+    if "idleMinutes" in body:
+        IDLE_FILE.write_text(str(max(0, int(body["idleMinutes"]))))
+    return web.json_response({"idleMinutes": idle_minutes()})
+
+
+async def shutdown(request):
+    """Switches the pod off at the user's request (the "Выключить" button in the app)."""
+    if not os.environ.get("RUNPOD_POD_ID"):
+        return web.json_response({"error": "Выключение работает только на RunPod."}, status=400)
+
+    async def later():
+        await asyncio.sleep(2)  # let the answer reach the phone first
+        await stop_pod("Сервер выключен из приложения.")
+
+    asyncio.create_task(later())
+    return web.json_response({"ok": True})
+
+
 async def on_startup(app):
     load_jobs()
-    app["watchers"] = [asyncio.create_task(watch_comfy(app)), asyncio.create_task(poll_unfinished(app))]
+    app["watchers"] = [
+        asyncio.create_task(watch_comfy(app)),
+        asyncio.create_task(poll_unfinished(app)),
+        asyncio.create_task(watch_idle(app)),
+    ]
 
 
 def main():
@@ -571,6 +664,9 @@ def main():
     app.router.add_post("/api/jobs", create_job)
     app.router.add_delete("/api/jobs/{job_id}", delete_job)
     app.router.add_get("/api/jobs/{job_id}/files/{index}", job_file)
+    app.router.add_get("/api/settings", get_settings)
+    app.router.add_post("/api/settings", set_settings)
+    app.router.add_post("/api/shutdown", shutdown)
     app.on_startup.append(on_startup)
     web.run_app(app, host="0.0.0.0", port=8080, print=None)
 

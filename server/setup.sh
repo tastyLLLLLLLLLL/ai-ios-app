@@ -51,10 +51,10 @@ apt-get update -qq >/dev/null 2>&1
 apt-get install -y -qq git curl zstd python3-venv >/dev/null 2>&1 || warn "системные пакеты"
 
 say "2/6 Файлы сервера Pocket AI"
-for file in gateway.py start.sh; do
+for file in gateway.py start.sh autostart.sh; do
   curl -fsSL "$REPO_RAW/$file" -o "$ROOT/$file" || { echo "Не удалось скачать $file — проверьте интернет и запустите скрипт ещё раз."; exit 1; }
 done
-chmod +x "$ROOT/start.sh"
+chmod +x "$ROOT/start.sh" "$ROOT/autostart.sh"
 [ -s "$ROOT/password.txt" ] || python3 -c "import secrets; print(secrets.token_urlsafe(18))" > "$ROOT/password.txt"
 [ -s "$ROOT/ntfy.txt" ] || python3 -c "import secrets; print('pocketai-' + secrets.token_hex(8))" > "$ROOT/ntfy.txt"
 ok "Пароль и тема уведомлений созданы"
@@ -89,7 +89,7 @@ else
 fi
 [ -x "$VENV/bin/python" ] || python3 -m venv --system-site-packages "$VENV"
 "$VENV/bin/pip" install -q --upgrade pip >/dev/null 2>&1
-"$VENV/bin/pip" install -q -r "$COMFY/requirements.txt" aiohttp || warn "библиотеки ComfyUI"
+"$VENV/bin/pip" install -q -r "$COMFY/requirements.txt" aiohttp qrcode || warn "библиотеки ComfyUI"
 if ! "$VENV/bin/python" -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
   "$VENV/bin/pip" install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 || warn "PyTorch"
 fi
@@ -110,6 +110,8 @@ get "$HF/Comfy-Org/ACE-Step_ComfyUI_repackaged/resolve/main/all_in_one/ace_step_
   || warn "ACE-Step (музыка)"
 
 say "6/6 Запуск"
+# Restart the gateway so an updated version takes effect.
+pkill -f "ai-server/gateway.py" 2>/dev/null; sleep 1
 bash "$ROOT/start.sh"
 
 if [ ${#FAILED[@]} -gt 0 ]; then

@@ -107,7 +107,17 @@ struct ChatView: View {
 
     @ViewBuilder
     private var statusPill: some View {
-        if model.engineState == .loading {
+        if model.server.power == .starting {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Включаю сервер… обычно 1–3 минуты")
+                    .font(.footnote.weight(.medium))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .glassCard(cornerRadius: 18, blurred: true)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else if model.engineState == .loading {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text("Загружаю модель в память…")

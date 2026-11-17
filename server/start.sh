@@ -45,13 +45,21 @@ else
   printf '\n\033[1;31m✗ Сервер не ответил. Пришлите вывод команды: tail -n 40 %s/gateway.log\033[0m\n\n' "$LOGS"
 fi
 
-echo "Данные для приложения (Модели → Онлайн):"
+PASSWORD=$(cat "$ROOT/password.txt")
 if [ -n "${RUNPOD_POD_ID:-}" ]; then
-  echo "  Адрес:  https://${RUNPOD_POD_ID}-8080.proxy.runpod.net"
+  ADDRESS="https://${RUNPOD_POD_ID}-8080.proxy.runpod.net"
+  LINK=$(/workspace/venv/bin/python -c "import sys, urllib.parse as u; print('pocketai://connect?address=' + u.quote(sys.argv[1], safe='') + '&password=' + u.quote(sys.argv[2], safe=''))" "$ADDRESS" "$PASSWORD" 2>/dev/null)
+  echo "Подключение приложения: наведите камеру iPhone на этот QR-код и нажмите «Открыть в Pocket AI»:"
+  /workspace/venv/bin/python -c "import qrcode, sys; q = qrcode.QRCode(border=2); q.add_data(sys.argv[1]); q.print_ascii(invert=True)" "$LINK" 2>/dev/null \
+    || echo "  (QR-код недоступен — запустите скрипт установки ещё раз)"
+  echo
+  echo "Или введите вручную (Модели → Онлайн):"
+  echo "  Адрес:  $ADDRESS"
 else
+  echo "Данные для приложения (Модели → Онлайн):"
   echo "  Адрес:  ссылка на порт 8080 из кнопки Connect на RunPod"
 fi
-echo "  Пароль: $(cat "$ROOT/password.txt")"
+echo "  Пароль: $PASSWORD"
 echo
 echo "Уведомления о готовности картинок, видео и музыки: установите на iPhone приложение ntfy"
 echo "и подпишитесь на тему: $(cat "$ROOT/ntfy.txt")"

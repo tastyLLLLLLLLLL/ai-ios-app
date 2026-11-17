@@ -78,6 +78,10 @@ private struct HealthResponse: Decodable {
     let ntfyTopic: String
 }
 
+private struct ServerSettings: Decodable {
+    let idleMinutes: Int
+}
+
 private struct ErrorResponse: Decodable {
     let error: String
 }
@@ -94,7 +98,7 @@ enum ServerError: LocalizedError {
         case .notConfigured: return "Сервер не подключён. Откройте Модели → Онлайн."
         case .badAddress: return "Неправильный адрес сервера. Он должен начинаться с https://"
         case .wrongPassword: return "Неверный пароль."
-        case .unreachable: return "Сервер не отвечает. Запустите его на RunPod и выполните bash /workspace/ai-server/start.sh"
+        case .unreachable: return "Сервер выключен или не отвечает. Включите его кнопкой в разделе Модели → Онлайн (или на RunPod)."
         case .message(let text): return text
         }
     }
@@ -119,6 +123,13 @@ final class ServerStore {
         case failed(String)
     }
 
+    enum Power: Equatable {
+        case unknown
+        case starting
+        case stopping
+        case off
+    }
+
     private static let addressKey = "serverAddress"
     private static let modelKey = "serverTextModel"
 
@@ -130,6 +141,11 @@ final class ServerStore {
     private(set) var mediaModels: [MediaModel] = []
     private(set) var jobs: [ServerJob] = []
     private(set) var selectedTextModelID: String?
+    private(set) var power: Power = .unknown
+    /// Minutes without use after which the server switches itself off (0 = never).
+    private(set) var idleMinutes = 20
+    /// RunPod account key, needed only to switch a stopped server on. Kept in the keychain.
+    private(set) var hasRunPodKey = false
 
     /// Called when a job finishes or fails: (job, finished successfully).
     var onJobFinished: ((ServerJob, Bool) -> Void)?
@@ -140,6 +156,7 @@ final class ServerStore {
     init() {
         address = UserDefaults.standard.string(forKey: Self.addressKey) ?? ""
         password = Keychain.read() ?? ""
+        hasRunPodKey = Keychain.read(account: "runpod") != nil
         selectedTextModelID = UserDefaults.standard.string(forKey: Self.modelKey)
         if isConfigured {
             Task { await refresh() }
@@ -174,6 +191,17 @@ final class ServerStore {
         await refresh()
     }
 
+    /// Handles pocketai://connect?address=…&password=… from the QR code printed by the server.
+    @discardableResult
+    func connect(from url: URL) async -> Bool {
+        guard url.scheme == "pocketai", url.host == "connect",
+              let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+              let address = items.first(where: { $0.name == "address" })?.value,
+              let password = items.first(where: { $0.name == "password" })?.value else { return false }
+        await connect(address: address, password: password)
+        return true
+    }
+
     func disconnect() {
         pollingTask?.cancel()
         address = ""
@@ -204,9 +232,132 @@ final class ServerStore {
                 selectedTextModelID = textModels.first?.id
             }
             status = .connected
+            power = .unknown
+            if let settings: ServerSettings = try? await get("/api/settings") {
+                idleMinutes = settings.idleMinutes
+            }
             await refreshJobs()
         } catch {
             status = .failed(error.localizedDescription)
+        }
+    }
+
+    // MARK: Power
+
+    /// RunPod pod ID, taken from the address https://<pod id>-8080.proxy.runpod.net.
+    var podID: String? {
+        guard let host = URL(string: address)?.host, host.hasSuffix(".proxy.runpod.net") else { return nil }
+        let label = host.components(separatedBy: ".").first ?? ""
+        guard let dash = label.lastIndex(of: "-") else { return nil }
+        let id = String(label[..<dash])
+        return id.isEmpty ? nil : id
+    }
+
+    var canStartServer: Bool { hasRunPodKey && podID != nil }
+
+    func saveRunPodKey(_ key: String) {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            Keychain.delete(account: "runpod")
+        } else {
+            Keychain.save(trimmed, account: "runpod")
+        }
+        hasRunPodKey = !trimmed.isEmpty
+    }
+
+    func setIdleMinutes(_ minutes: Int) async {
+        idleMinutes = minutes
+        let _: ServerSettings? = try? await send("/api/settings", method: "POST", body: ["idleMinutes": minutes])
+    }
+
+    /// Switches the server off right away (it shuts itself down, so no RunPod key is needed).
+    func stopServer() async throws {
+        power = .stopping
+        do {
+            _ = try await sendRaw("/api/shutdown", method: "POST", body: nil)
+        } catch {
+            if canStartServer {
+                try await runPodAction("stop")
+            } else {
+                power = .unknown
+                throw error
+            }
+        }
+        try? await Task.sleep(for: .seconds(4))
+        power = .off
+        status = .failed("Сервер выключен.")
+    }
+
+    /// Switches a stopped server on and waits until it answers.
+    func startServer() async throws {
+        guard canStartServer else {
+            throw ServerError.message("Чтобы включать сервер из приложения, добавьте ключ RunPod в разделе «Онлайн».")
+        }
+        power = .starting
+        do {
+            try await runPodAction("start")
+            try await waitUntilReachable(seconds: 360)
+            power = .unknown
+            await refresh()
+        } catch {
+            power = .off
+            throw error
+        }
+    }
+
+    /// Makes sure the server is on before a request: starts it automatically when a RunPod key is saved.
+    func ensureRunning() async throws {
+        if await isReachable() { return }
+        guard canStartServer else { throw ServerError.unreachable }
+        try await startServer()
+    }
+
+    private func isReachable() async -> Bool {
+        guard isConfigured, let url = URL(string: address + "/api/ping") else { return false }
+        var request = URLRequest(url: url, timeoutInterval: 8)
+        request.httpMethod = "GET"
+        guard let (_, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse else { return false }
+        return http.statusCode == 200
+    }
+
+    private func waitUntilReachable(seconds: Int) async throws {
+        let deadline = Date().addingTimeInterval(TimeInterval(seconds))
+        while Date() < deadline {
+            try Task.checkCancellation()
+            if await isReachable() { return }
+            try await Task.sleep(for: .seconds(5))
+        }
+        throw ServerError.message("Сервер включился, но не ответил за 6 минут. Проверьте на RunPod, что он запущен, и что в команде запуска стоит autostart.sh.")
+    }
+
+    /// Start or stop through the RunPod API (v2, with a fallback to the older v1).
+    private func runPodAction(_ action: String) async throws {
+        guard let pod = podID, let key = Keychain.read(account: "runpod") else { throw ServerError.notConfigured }
+        var request = URLRequest(url: URL(string: "https://api.runpod.io/v2/pods/\(pod)/action")!, timeoutInterval: 30)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["action": action])
+
+        var (data, response) = try await URLSession.shared.data(for: request)
+        var code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if code == 404 || code == 405 {
+            var old = URLRequest(url: URL(string: "https://rest.runpod.io/v1/pods/\(pod)/\(action)")!, timeoutInterval: 30)
+            old.httpMethod = "POST"
+            old.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            (data, response) = try await URLSession.shared.data(for: old)
+            code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        }
+        guard (200..<300).contains(code) else {
+            if code == 401 || code == 403 {
+                throw ServerError.message("RunPod не принял ключ. Создайте новый ключ с правами Read/Write и вставьте его ещё раз.")
+            }
+            let text = String(data: data, encoding: .utf8) ?? ""
+            if text.localizedCaseInsensitiveContains("gpu") {
+                throw ServerError.message("На машине RunPod сейчас нет свободной видеокарты. Попробуйте позже или создайте сервер заново на том же диске.")
+            }
+            throw ServerError.message("RunPod ответил ошибкой \(code). \(text.prefix(200))")
         }
     }
 
@@ -266,6 +417,7 @@ final class ServerStore {
     // MARK: Jobs
 
     func createJob(kind: MediaKind, model: String, prompt: String, options: [String: Any]) async throws {
+        try await ensureRunning()
         var body = options
         body["kind"] = kind.rawValue
         body["model"] = model
@@ -392,22 +544,24 @@ final class ServerStore {
 
 /// Keeps the server password in the iPhone keychain rather than in plain settings.
 private enum Keychain {
-    private static let query: [String: Any] = [
-        kSecClass as String: kSecClassGenericPassword,
-        kSecAttrService as String: "PocketAI.server",
-        kSecAttrAccount as String: "password"
-    ]
+    private static func query(_ account: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "PocketAI.server",
+            kSecAttrAccount as String: account
+        ]
+    }
 
-    static func save(_ value: String) {
-        delete()
-        var item = query
+    static func save(_ value: String, account: String = "password") {
+        delete(account: account)
+        var item = query(account)
         item[kSecValueData as String] = Data(value.utf8)
         item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         SecItemAdd(item as CFDictionary, nil)
     }
 
-    static func read() -> String? {
-        var request = query
+    static func read(account: String = "password") -> String? {
+        var request = query(account)
         request[kSecReturnData as String] = true
         request[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: AnyObject?
@@ -416,7 +570,7 @@ private enum Keychain {
         return String(data: data, encoding: .utf8)
     }
 
-    static func delete() {
-        SecItemDelete(query as CFDictionary)
+    static func delete(account: String = "password") {
+        SecItemDelete(query(account) as CFDictionary)
     }
 }

@@ -10,6 +10,9 @@ struct OnlineModelsView: View {
     @State private var password = ""
     @State private var connecting = false
     @State private var copied = false
+    @State private var runPodKey = ""
+    @State private var powerError: String?
+    @State private var powerBusy = false
 
     private var server: ServerStore { model.server }
 
@@ -17,6 +20,7 @@ struct OnlineModelsView: View {
         VStack(alignment: .leading, spacing: 14) {
             if server.isConfigured {
                 statusCard
+                powerCard
                 if server.isConnected {
                     connectedContent
                 }
@@ -48,7 +52,10 @@ struct OnlineModelsView: View {
                 }
             }
 
-            Text("Адрес и пароль показывает скрипт установки на сервере в конце работы, а также команда start.sh.")
+            Label("Проще всего: наведите камеру iPhone на QR-код, который показывает сервер в конце установки, и нажмите «Открыть в Pocket AI».", systemImage: "qrcode.viewfinder")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Text("Или введите адрес и пароль из того же вывода вручную:")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
@@ -159,14 +166,148 @@ struct OnlineModelsView: View {
                 .buttonStyle(PressableStyle())
             }
 
-            if case .failed = server.status {
-                Text("Если сервер выключен, запустите его на RunPod и выполните в консоли:\nbash /workspace/ai-server/start.sh")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+
         }
         .padding(16)
         .glassCard(cornerRadius: 22)
+    }
+
+    // MARK: Power
+
+    private var powerCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Питание сервера", systemImage: "power")
+                .font(.headline)
+
+            powerButton
+
+            if let powerError {
+                Label(powerError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+
+            Divider()
+
+            HStack {
+                Text("Выключать после простоя")
+                    .font(.subheadline)
+                Spacer()
+                Picker("Выключать после простоя", selection: Binding(
+                    get: { server.idleMinutes },
+                    set: { value in Task { await server.setIdleMinutes(value) } }
+                )) {
+                    Text("10 мин").tag(10)
+                    Text("20 мин").tag(20)
+                    Text("30 мин").tag(30)
+                    Text("1 час").tag(60)
+                    Text("Никогда").tag(0)
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .disabled(!server.isConnected)
+            }
+            Text("Сервер сам выключится, если им не пользоваться, — деньги за работу перестанут списываться. Пока идёт ответ или создаётся картинка, он не выключится.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Divider()
+
+            if server.hasRunPodKey {
+                HStack {
+                    Label("Ключ RunPod сохранён", systemImage: "checkmark.seal.fill")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(Theme.tint)
+                    Spacer()
+                    Button("Удалить", role: .destructive) { server.saveRunPodKey("") }
+                        .font(.footnote.weight(.medium))
+                }
+                Text("Если сервер выключен, приложение само включит его, когда вы напишете онлайн-модели или создадите что-то в Студии.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Чтобы включать сервер из приложения, нужен ключ RunPod: на сайте RunPod откройте Settings → API Keys → Create API Key, выберите права Read/Write и скопируйте ключ. Он хранится только на этом iPhone, никому его не пересылайте.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    SecureField("Ключ RunPod", text: $runPodKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .padding(10)
+                        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    Button("Сохранить") {
+                        server.saveRunPodKey(runPodKey)
+                        runPodKey = ""
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .disabled(runPodKey.isEmpty)
+                }
+            }
+
+            DisclosureGroup("Как сделать, чтобы сервер запускался сам") {
+                Text("Один раз, когда установка закончится: на RunPod откройте сервер → ⋮ → Edit Pod → в поле Container Start Command вставьте\n\nbash /workspace/ai-server/autostart.sh\n\nи сохраните. Сервер перезапустится и дальше после каждого включения будет готов сам, без консоли.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .padding(.top, 6)
+            }
+            .font(.subheadline)
+        }
+        .padding(16)
+        .glassCard(cornerRadius: 22)
+    }
+
+    @ViewBuilder
+    private var powerButton: some View {
+        switch server.power {
+        case .starting:
+            HStack(spacing: 10) {
+                ProgressView()
+                Text("Включаю сервер… обычно 1–3 минуты").font(.subheadline)
+            }
+        case .stopping:
+            HStack(spacing: 10) {
+                ProgressView()
+                Text("Выключаю сервер…").font(.subheadline)
+            }
+        default:
+            if server.isConnected {
+                powerAction(title: "Выключить сервер", icon: "power", tint: .red) {
+                    try await server.stopServer()
+                }
+            } else {
+                powerAction(title: "Включить сервер", icon: "power", tint: Theme.tint) {
+                    try await server.startServer()
+                }
+                .disabled(!server.canStartServer)
+                .opacity(server.canStartServer ? 1 : 0.5)
+            }
+        }
+    }
+
+    private func powerAction(title: String, icon: String, tint: Color, action: @escaping () async throws -> Void) -> some View {
+        Button {
+            powerError = nil
+            powerBusy = true
+            Task {
+                do {
+                    try await action()
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                } catch {
+                    withAnimation(.smooth) { powerError = error.localizedDescription }
+                }
+                powerBusy = false
+            }
+        } label: {
+            Label(title, systemImage: icon)
+                .font(.headline)
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 13)
+                .background(tint, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(PressableStyle())
+        .disabled(powerBusy)
     }
 
     // MARK: Models
