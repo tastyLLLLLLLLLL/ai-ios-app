@@ -32,6 +32,7 @@ struct SettingsView: View {
                         } icon: {
                             Image(systemName: model.settings.uncensored ? "lock.open.fill" : "lock.fill")
                                 .contentTransition(.symbolEffect(.replace))
+                                .symbolEffect(.bounce, value: model.settings.uncensored)
                                 .foregroundStyle(Theme.accent)
                         }
                     }
@@ -44,7 +45,15 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("Режим размышлений", isOn: $model.settings.thinkingEnabled)
+                    Toggle(isOn: $model.settings.thinkingEnabled) {
+                        Label {
+                            Text("Режим размышлений")
+                        } icon: {
+                            Image(systemName: "brain")
+                                .symbolEffect(.bounce, value: model.settings.thinkingEnabled)
+                                .foregroundStyle(Theme.accent)
+                        }
+                    }
                 } footer: {
                     Text("Модель сначала обдумывает задачу, потом отвечает. Ответы точнее, но приходят медленнее. Работает с моделями Qwen3; DeepSeek R1 рассуждает всегда.")
                 }
@@ -102,6 +111,7 @@ struct SettingsView: View {
                     }
                 }
             }
+            .animation(.easeInOut(duration: 0.5), value: ThemeStore.shared.palette.id)
             .animation(.smooth, value: model.settings.uncensored)
             .animation(.smooth, value: uncensoredKind)
             .sensoryFeedback(.selection, trigger: model.settings.uncensored)
@@ -150,7 +160,7 @@ struct SettingsView: View {
                     ForEach(Palette.all) { palette in
                         let isSelected = palette.id == theme.palette.id
                         Button {
-                            withAnimation(.smooth) { theme.setPalette(palette.id) }
+                            withAnimation(.easeInOut(duration: 0.5)) { theme.setPalette(palette.id) }
                         } label: {
                             VStack(spacing: 6) {
                                 Circle()
@@ -170,6 +180,7 @@ struct SettingsView: View {
                                             .opacity(isSelected ? 1 : 0)
                                     }
                                     .scaleEffect(isSelected ? 1 : 0.92)
+                                    .animation(.spring(response: 0.4, dampingFraction: 0.55), value: isSelected)
                                 Text(palette.name)
                                     .font(.caption2.weight(isSelected ? .semibold : .regular))
                                     .foregroundStyle(isSelected ? Color.primary : Color.secondary)

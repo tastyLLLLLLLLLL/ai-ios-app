@@ -120,12 +120,23 @@ enum Theme {
     }
 }
 
-/// Soft coloured glow behind every screen. Static on purpose: the GPU is busy running the model.
+/// Ambient motion (drifting background, rotating logo). Switched off for the automated screenshot run.
+enum Motion {
+    static let ambient = !UserDefaults.standard.bool(forKey: "demoStill")
+}
+
+/// Soft coloured glow behind every screen. The glows drift slowly and flare up when the theme changes.
 struct AuroraBackground: View {
     @Environment(\.colorScheme) private var colorScheme
+    @State private var drift = false
+    @State private var flare = false
 
     var body: some View {
         let dark = colorScheme == .dark
+        let paletteID = ThemeStore.shared.palette.id
+        let shift: CGFloat = drift ? 1 : 0
+        let scale: CGFloat = flare ? 1.35 : 1
+
         ZStack {
             (dark ? Color(red: 0.035, green: 0.035, blue: 0.07) : Color(red: 0.965, green: 0.96, blue: 0.985))
 
@@ -135,20 +146,38 @@ struct AuroraBackground: View {
                     .fill(Theme.primary.opacity(dark ? 0.38 : 0.22))
                     .frame(width: size.width * 0.9)
                     .blur(radius: 110)
-                    .offset(x: -size.width * 0.35, y: -size.width * 0.3)
+                    .scaleEffect(scale)
+                    .offset(x: size.width * (-0.35 + 0.14 * shift), y: size.width * (-0.3 + 0.10 * shift))
                 Circle()
                     .fill(Theme.tertiary.opacity(dark ? 0.22 : 0.18))
                     .frame(width: size.width * 0.8)
                     .blur(radius: 120)
-                    .offset(x: size.width * 0.5, y: size.height * 0.25)
+                    .scaleEffect(scale)
+                    .offset(x: size.width * (0.5 - 0.16 * shift), y: size.height * (0.25 + 0.06 * shift))
                 Circle()
                     .fill(Theme.tint.opacity(dark ? 0.26 : 0.16))
                     .frame(width: size.width * 0.9)
                     .blur(radius: 130)
-                    .offset(x: -size.width * 0.2, y: size.height * 0.72)
+                    .scaleEffect(scale)
+                    .offset(x: size.width * (-0.2 + 0.18 * shift), y: size.height * (0.72 - 0.07 * shift))
             }
         }
         .ignoresSafeArea()
+        .animation(.easeInOut(duration: 0.6), value: paletteID)
+        .animation(.easeInOut(duration: 0.4), value: dark)
+        .onAppear {
+            guard Motion.ambient else { return }
+            withAnimation(.easeInOut(duration: 16).repeatForever(autoreverses: true)) {
+                drift = true
+            }
+        }
+        .onChange(of: paletteID) {
+            withAnimation(.easeOut(duration: 0.3)) { flare = true }
+            Task {
+                try? await Task.sleep(for: .seconds(0.3))
+                withAnimation(.spring(response: 0.9, dampingFraction: 0.6)) { flare = false }
+            }
+        }
     }
 }
 
@@ -176,6 +205,7 @@ extension View {
 struct OrbLogo: View {
     var size: CGFloat = 96
     @State private var pulse = false
+    @State private var spin = false
 
     var body: some View {
         ZStack {
@@ -186,6 +216,7 @@ struct OrbLogo: View {
                 .scaleEffect(pulse ? 1.12 : 0.96)
             Circle()
                 .fill(Theme.accent)
+                .rotationEffect(.degrees(spin ? 360 : 0))
                 .overlay(
                     Circle()
                         .fill(
@@ -203,8 +234,12 @@ struct OrbLogo: View {
         }
         .frame(width: size, height: size)
         .onAppear {
+            guard Motion.ambient else { return }
             withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) {
                 pulse = true
+            }
+            withAnimation(.linear(duration: 18).repeatForever(autoreverses: false)) {
+                spin = true
             }
         }
     }

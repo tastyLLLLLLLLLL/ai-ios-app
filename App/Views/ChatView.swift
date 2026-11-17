@@ -78,7 +78,9 @@ struct ChatView: View {
                         )
                         .transition(
                             .asymmetric(
-                                insertion: .move(edge: .bottom).combined(with: .opacity),
+                                insertion: message.role == .user
+                                    ? .scale(scale: 0.8, anchor: .bottomTrailing).combined(with: .opacity)
+                                    : .move(edge: .bottom).combined(with: .opacity),
                                 removal: .opacity
                             )
                         )
@@ -214,6 +216,7 @@ struct InputBar: View {
     @ViewBuilder
     private var attachButton: some View {
         let icon = Image(systemName: "photo.on.rectangle.angled")
+            .symbolEffect(.bounce, value: photos.count)
             .font(.system(size: 18, weight: .medium))
             .foregroundStyle(canAttachPhotos ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.secondary))
             .frame(width: 40, height: 36)

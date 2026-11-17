@@ -6,10 +6,13 @@ struct RootView: View {
     @State private var showChats = false
     @State private var showModels = false
     @State private var showSettings = false
+    @State private var launched = false
 
     var body: some View {
         NavigationStack {
             ChatView(showModels: $showModels)
+                .opacity(launched ? 1 : 0)
+                .scaleEffect(launched ? 1 : 0.96)
                 .background(AuroraBackground())
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -18,6 +21,7 @@ struct RootView: View {
                             showChats = true
                         } label: {
                             Image(systemName: "line.3.horizontal")
+                                .symbolEffect(.bounce, value: showChats)
                         }
                         .accessibilityLabel("Чаты")
                     }
@@ -39,6 +43,8 @@ struct RootView: View {
                                 Image(systemName: "chevron.down")
                                     .font(.caption2.weight(.bold))
                                     .foregroundStyle(.secondary)
+                                    .rotationEffect(.degrees(showModels ? 180 : 0))
+                                    .animation(.smooth, value: showModels)
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
@@ -54,12 +60,14 @@ struct RootView: View {
                             showSettings = true
                         } label: {
                             Image(systemName: "slider.horizontal.3")
+                                .symbolEffect(.bounce, value: showSettings)
                         }
                         .accessibilityLabel("Настройки")
                         Button {
                             withAnimation(.smooth) { model.newChat() }
                         } label: {
                             Image(systemName: "square.and.pencil")
+                                .symbolEffect(.bounce, value: model.currentID)
                         }
                         .accessibilityLabel("Новый чат")
                     }
@@ -76,7 +84,11 @@ struct RootView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
         }
-        .onAppear { ThemeStore.shared.apply(animated: false) }
+        .animation(.easeInOut(duration: 0.5), value: ThemeStore.shared.palette.id)
+        .onAppear {
+            ThemeStore.shared.apply(animated: false)
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) { launched = true }
+        }
         .task {
             // Launch arguments used by the automated screenshot run:
             // -demoScreen models|settings|chats, -demoModel <file>, -demoUncensored YES,
@@ -121,6 +133,7 @@ struct RootView: View {
 struct ChatListView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @State private var appeared = false
 
     var body: some View {
         NavigationStack {
@@ -133,7 +146,7 @@ struct ChatListView: View {
                     )
                 } else {
                     List {
-                        ForEach(model.sortedConversations) { conversation in
+                        ForEach(Array(model.sortedConversations.enumerated()), id: \.element.id) { index, conversation in
                             Button {
                                 withAnimation(.smooth) { model.open(conversation.id) }
                                 dismiss()
@@ -149,7 +162,10 @@ struct ChatListView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(PressableStyle(scale: 0.98))
+                            .opacity(appeared ? 1 : 0)
+                            .offset(x: appeared ? 0 : -18)
+                            .animation(.smooth.delay(Double(min(index, 10)) * 0.04), value: appeared)
                             .listRowBackground(
                                 conversation.id == model.currentID ? Theme.tint.opacity(0.14) : Color.clear
                             )
@@ -164,9 +180,11 @@ struct ChatListView: View {
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
+                    .animation(.smooth, value: model.sortedConversations.map(\.id))
                 }
             }
             .background(AuroraBackground())
+            .onAppear { appeared = true }
             .navigationTitle("Чаты")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

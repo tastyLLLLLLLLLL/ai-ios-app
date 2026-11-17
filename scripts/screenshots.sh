@@ -38,7 +38,8 @@ launch() {
   limit 60 xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true
   sleep 1
   step "launch $*"
-  limit 120 xcrun simctl launch "$UDID" "$BUNDLE" "$@" || echo "launch failed or timed out"
+  # -demoStill switches off the ambient background motion, which is costly without a GPU.
+  limit 120 xcrun simctl launch "$UDID" "$BUNDLE" -demoStill YES "$@" || echo "launch failed or timed out"
 }
 
 launch
