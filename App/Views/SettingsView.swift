@@ -23,6 +23,8 @@ struct SettingsView: View {
 
         NavigationStack {
             Form {
+                themeSection
+
                 Section {
                     Toggle(isOn: $model.settings.uncensored) {
                         Label {
@@ -130,6 +132,64 @@ struct SettingsView: View {
         }
     }
 
+    private var themeSection: some View {
+        let theme = ThemeStore.shared
+        return Section {
+            Picker("Режим", selection: Binding(
+                get: { theme.appearance },
+                set: { theme.setAppearance($0) }
+            )) {
+                ForEach(AppearanceMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    ForEach(Palette.all) { palette in
+                        let isSelected = palette.id == theme.palette.id
+                        Button {
+                            withAnimation(.smooth) { theme.setPalette(palette.id) }
+                        } label: {
+                            VStack(spacing: 6) {
+                                Circle()
+                                    .fill(palette.gradient)
+                                    .frame(width: 46, height: 46)
+                                    .overlay {
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 16, weight: .bold))
+                                            .foregroundStyle(.white)
+                                            .scaleEffect(isSelected ? 1 : 0.3)
+                                            .opacity(isSelected ? 1 : 0)
+                                    }
+                                    .padding(4)
+                                    .overlay {
+                                        Circle()
+                                            .strokeBorder(palette.tint, lineWidth: 2)
+                                            .opacity(isSelected ? 1 : 0)
+                                    }
+                                    .scaleEffect(isSelected ? 1 : 0.92)
+                                Text(palette.name)
+                                    .font(.caption2.weight(isSelected ? .semibold : .regular))
+                                    .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                            }
+                        }
+                        .buttonStyle(PressableStyle(scale: 0.9))
+                        .accessibilityLabel("Тема \(palette.name)")
+                    }
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 2)
+            }
+            .sensoryFeedback(.selection, trigger: theme.palette.id)
+        } header: {
+            Text("Темы")
+        } footer: {
+            Text("Светлый или тёмный режим и цвет оформления: кнопок, сообщений и фона.")
+        }
+    }
+
     @ViewBuilder
     private var uncensoredStatus: some View {
         switch uncensoredState {
@@ -153,7 +213,7 @@ struct SettingsView: View {
                         .buttonStyle(.borderless)
                 }
                 ProgressView(value: progress.fraction)
-                    .tint(Theme.blue)
+                    .tint(Theme.tint)
                     .animation(.linear(duration: 0.3), value: progress.fraction)
             }
 

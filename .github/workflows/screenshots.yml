@@ -14,6 +14,11 @@ on:
 permissions:
   contents: write
 
+# Only the newest commit gets a screenshot run.
+concurrency:
+  group: screenshots
+  cancel-in-progress: true
+
 env:
   LLAMA_TAG: b12445
 

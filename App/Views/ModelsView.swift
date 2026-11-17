@@ -277,7 +277,7 @@ private struct ModelCardShell<Extra: View>: View {
         case .downloading(let progress):
             VStack(alignment: .leading, spacing: 6) {
                 ProgressView(value: progress.fraction)
-                    .tint(Theme.blue)
+                    .tint(Theme.tint)
                     .animation(.linear(duration: 0.3), value: progress.fraction)
                 HStack {
                     Text(progressLabel(progress))

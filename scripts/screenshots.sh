@@ -66,6 +66,16 @@ wait_for_reply() {
 
 launch
 shot 03-home 5
+
+# Themes: other colour schemes and the forced light mode, then back to the defaults.
+launch -demoPalette sunset
+shot 03a-theme-sunset 5
+launch -demoPalette forest -demoAppearance light
+shot 03b-theme-forest-light 5
+launch -demoPalette ruby -demoAppearance dark -demoScreen settings
+shot 03c-theme-settings 5
+launch -demoPalette ocean -demoAppearance system
+sleep 3
 launch -demoScreen settings
 shot 04-settings 5
 launch -demoScreen models

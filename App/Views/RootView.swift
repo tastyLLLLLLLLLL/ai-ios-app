@@ -66,7 +66,7 @@ struct RootView: View {
                 }
                 .toolbarBackground(.hidden, for: .navigationBar)
         }
-        .tint(Theme.blue)
+        .tint(Theme.tint)
         .sheet(isPresented: $showChats) {
             ChatListView()
         }
@@ -76,11 +76,18 @@ struct RootView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
         }
+        .onAppear { ThemeStore.shared.apply(animated: false) }
         .task {
             // Launch arguments used by the automated screenshot run:
             // -demoScreen models|settings|chats, -demoModel <file>, -demoUncensored YES,
-            // -demoImage <path>, -demoPrompt "text".
+            // -demoImage <path>, -demoPrompt "text", -demoPalette <id>, -demoAppearance light|dark.
             let defaults = UserDefaults.standard
+            if let palette = defaults.string(forKey: "demoPalette") {
+                ThemeStore.shared.setPalette(palette)
+            }
+            if let mode = defaults.string(forKey: "demoAppearance").flatMap(AppearanceMode.init(rawValue:)) {
+                ThemeStore.shared.setAppearance(mode)
+            }
             if let file = defaults.string(forKey: "demoModel"), model.models.installed.contains(file) {
                 model.models.select(file)
             }
@@ -144,7 +151,7 @@ struct ChatListView: View {
                             }
                             .buttonStyle(.plain)
                             .listRowBackground(
-                                conversation.id == model.currentID ? Theme.blue.opacity(0.14) : Color.clear
+                                conversation.id == model.currentID ? Theme.tint.opacity(0.14) : Color.clear
                             )
                             .swipeActions {
                                 Button(role: .destructive) {
