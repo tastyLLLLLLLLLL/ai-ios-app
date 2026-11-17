@@ -123,6 +123,18 @@ enum Theme {
 /// Ambient motion (drifting background, rotating logo). Switched off for the automated screenshot run.
 enum Motion {
     static let ambient = !UserDefaults.standard.bool(forKey: "demoStill")
+
+    /// True while the drifting background and the rotating logo should move.
+    static var isRunning: Bool { ambient && !MotionStore.shared.paused }
+}
+
+/// Lets the app freeze ambient motion while the model is answering, so the graphics chip is free for it.
+@Observable
+final class MotionStore {
+    static let shared = MotionStore()
+    var paused = false
+
+    private init() {}
 }
 
 /// Soft coloured glow behind every screen. The glows drift slowly and flare up when the theme changes.
@@ -166,9 +178,13 @@ struct AuroraBackground: View {
         .animation(.easeInOut(duration: 0.6), value: paletteID)
         .animation(.easeInOut(duration: 0.4), value: dark)
         .onAppear {
-            guard Motion.ambient else { return }
-            withAnimation(.easeInOut(duration: 16).repeatForever(autoreverses: true)) {
-                drift = true
+            if Motion.isRunning { startDrift() }
+        }
+        .onChange(of: Motion.isRunning) {
+            if Motion.isRunning {
+                startDrift()
+            } else {
+                withAnimation(.easeOut(duration: 1.2)) { drift = false }
             }
         }
         .onChange(of: paletteID) {
@@ -177,6 +193,14 @@ struct AuroraBackground: View {
                 try? await Task.sleep(for: .seconds(0.3))
                 withAnimation(.spring(response: 0.9, dampingFraction: 0.6)) { flare = false }
             }
+        }
+    }
+}
+
+extension AuroraBackground {
+    private func startDrift() {
+        withAnimation(.easeInOut(duration: 16).repeatForever(autoreverses: true)) {
+            drift = true
         }
     }
 }
@@ -234,13 +258,26 @@ struct OrbLogo: View {
         }
         .frame(width: size, height: size)
         .onAppear {
-            guard Motion.ambient else { return }
-            withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) {
-                pulse = true
+            if Motion.isRunning { startMotion() }
+        }
+        .onChange(of: Motion.isRunning) {
+            if Motion.isRunning {
+                startMotion()
+            } else {
+                withAnimation(.easeOut(duration: 0.8)) {
+                    pulse = false
+                    spin = false
+                }
             }
-            withAnimation(.linear(duration: 18).repeatForever(autoreverses: false)) {
-                spin = true
-            }
+        }
+    }
+
+    private func startMotion() {
+        withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) {
+            pulse = true
+        }
+        withAnimation(.linear(duration: 18).repeatForever(autoreverses: false)) {
+            spin = true
         }
     }
 }

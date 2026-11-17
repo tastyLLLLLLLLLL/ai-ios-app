@@ -194,10 +194,23 @@ struct SettingsView: View {
                 .padding(.horizontal, 2)
             }
             .sensoryFeedback(.selection, trigger: theme.palette.id)
+
+            Toggle(isOn: Binding(
+                get: { model.settings.pauseMotionWhileAnswering },
+                set: { model.settings.pauseMotionWhileAnswering = $0 }
+            )) {
+                Label {
+                    Text("Замирать во время ответа")
+                } icon: {
+                    Image(systemName: model.settings.pauseMotionWhileAnswering ? "pause.circle.fill" : "play.circle.fill")
+                        .contentTransition(.symbolEffect(.replace))
+                        .foregroundStyle(Theme.accent)
+                }
+            }
         } header: {
             Text("Темы")
         } footer: {
-            Text("Светлый или тёмный режим и цвет оформления: кнопок, сообщений и фона.")
+            Text("Светлый или тёмный режим и цвет оформления. «Замирать во время ответа» останавливает движение фона, пока нейросеть пишет ответ, чтобы графический чип был занят только ей.")
         }
     }
 

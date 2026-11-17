@@ -147,6 +147,7 @@ final class AppModel {
 
     private func generate(in conversationID: UUID) {
         isGenerating = true
+        MotionStore.shared.paused = settings.pauseMotionWhileAnswering
         generationTask = Task {
             do {
                 try await ensureModelLoaded()
@@ -179,6 +180,7 @@ final class AppModel {
                 }
             }
             isGenerating = false
+            MotionStore.shared.paused = false
             save()
         }
     }
